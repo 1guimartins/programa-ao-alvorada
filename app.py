@@ -1,9 +1,9 @@
 import json
 import os
 from datetime import datetime, timedelta
-import io
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 st.set_page_config(
     page_title="PCP Supermercados Alvorada",
@@ -230,21 +230,98 @@ def calcular_total_itens(df):
     return total_itens, soma_qtd
 
 
-def gerar_relatorio_txt(titulo, df):
-    output = f"=========================================\n"
-    output += f"{titulo}\n"
-    output += f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
-    output += f"=========================================\n\n"
+# --- FUNÇÃO DE GERAR IMPRESSÃO FORMATADA EM A4 ---
+def exibir_botao_impressao_a4(titulo, df):
     if df.empty:
-        output += "Nenhum item cadastrado.\n"
-    else:
-        for _, row in df.iterrows():
-            status = row.get("Status", "⏳ Pendente")
-            qtd = row.get("Qtd", "")
-            uni = row.get("Unidade", "")
-            prod = row.get("Produto", "")
-            output += f"[{status}] {qtd} {uni} - {prod}\n"
-    return output
+        return
+
+    data_hora = datetime.now().strftime("%d/%m/%Y às %H:%M")
+
+    linhas_html = ""
+    for idx, row in df.iterrows():
+        status = row.get("Status", "⏳ Pendente")
+        qtd = row.get("Qtd", "")
+        uni = row.get("Unidade", "")
+        prod = row.get("Produto", "")
+        tipo = row.get("Tipo de Bolo", "")
+        col_tipo = f"<td>{tipo}</td>" if tipo else ""
+
+        linhas_html += f"""
+        <tr>
+            <td style='text-align: center;'>{idx + 1}</td>
+            <td style='text-align: center;'>{status}</td>
+            {col_tipo}
+            <td style='text-align: center; font-weight: bold;'>{qtd} {uni}</td>
+            <td style='font-weight: 500;'>{prod}</td>
+            <td style='width: 30px; text-align: center;'>[ &nbsp; ]</td>
+        </tr>
+        """
+
+    cabecalho_tipo = "<th>Tipo</th>" if "Tipo de Bolo" in df.columns else ""
+
+    html_a4 = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <style>
+            @page {{ size: A4 portrait; margin: 15mm; }}
+            body {{ font-family: Arial, sans-serif; color: #000; margin: 0; padding: 0; background-color: #fff; }}
+            .header {{ text-align: center; border-bottom: 2px solid #009944; padding-bottom: 10px; margin-bottom: 15px; }}
+            .header h1 {{ margin: 0; font-size: 20px; color: #FF6600; text-transform: uppercase; }}
+            .header h2 {{ margin: 5px 0 0 0; font-size: 16px; color: #009944; }}
+            .info-bar {{ display: flex; justify-content: space-between; margin-bottom: 15px; font-size: 12px; border-bottom: 1px solid #ddd; padding-bottom: 5px; }}
+            table {{ width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }}
+            th, td {{ border: 1px solid #333; padding: 6px 8px; text-align: left; }}
+            th {{ background-color: #f2f2f2; font-weight: bold; font-size: 12px; text-transform: uppercase; }}
+            .footer {{ margin-top: 30px; display: flex; justify-content: space-between; font-size: 11px; }}
+            .assinatura {{ border-top: 1px solid #000; width: 40%; text-align: center; padding-top: 5px; margin-top: 30px; }}
+            .btn-imprimir {{
+                background-color: #009944; color: white; border: none; padding: 10px 18px;
+                font-size: 15px; font-weight: bold; border-radius: 5px; cursor: pointer;
+                margin-bottom: 10px; display: inline-flex; align-items: center; gap: 8px;
+            }}
+            .btn-imprimir:hover {{ background-color: #007a36; }}
+            @media print {{
+                .btn-imprimir {{ display: none; }}
+            }}
+        </style>
+    </head>
+    <body>
+        <button class="btn-imprimir" onclick="window.print()">🖨️ IMPRIMIR / SALVAR PDF A4</button>
+        <div class="header">
+            <h1>SUPERMERCADOS ALVORADA - PCP</h1>
+            <h2>{titulo}</h2>
+        </div>
+        <div class="info-bar">
+            <span><strong>Emissão:</strong> {data_hora}</span>
+            <span><strong>Total de itens:</strong> {len(df)}</span>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 30px; text-align: center;">#</th>
+                    <th style="width: 110px; text-align: center;">Status</th>
+                    {cabecalho_tipo}
+                    <th style="width: 90px; text-align: center;">Qtd / Un</th>
+                    <th>Descrição do Produto</th>
+                    <th style="width: 40px; text-align: center;">OK</th>
+                </tr>
+            </thead>
+            <tbody>
+                {linhas_html}
+            </tbody>
+        </table>
+        <div style="margin-top: 40px; display: flex; justify-content: space-between;">
+            <div class="assinatura">Visto PCP / Liderança</div>
+            <div class="assinatura">Visto Produção / Operacional</div>
+        </div>
+    </body>
+    </html>
+    """
+
+    with st.expander("🖨️ Abrir Folha de Impressão A4 / Salvar PDF", expanded=False):
+        components.html(html_a4, height=450, scrolling=True)
 
 
 # --- BARRA LATERAL ---
@@ -439,15 +516,9 @@ for i, item_dia in enumerate(dias_semana_com_data):
                         df_estilizado, use_container_width=True, hide_index=True
                     )
 
-                    txt_rel = gerar_relatorio_txt(
+                    exibir_botao_impressao_a4(
                         f"CONFEITARIA - {dia_nome} ({dia_data_full})",
                         df_consolidado,
-                    )
-                    st.download_button(
-                        label="📄 Baixar Relatório do Dia (Impressão/Texto)",
-                        data=txt_rel,
-                        file_name=f"confeitaria_{dia_nome}_{dia_data_full.replace('/','_')}.txt",
-                        mime="text/plain",
                     )
                 else:
                     st.info(
@@ -603,12 +674,6 @@ for i, item_dia in enumerate(dias_semana_com_data):
                     st.success("Status atualizados!")
                     st.rerun()
 
-            txt_rel = gerar_relatorio_txt(
+            exibir_botao_impressao_a4(
                 f"{setor_ativo.upper()} - {dia_nome} ({dia_data_full})", df_atual
-            )
-            st.download_button(
-                label="📄 Baixar Relatório do Dia (Impressão/Texto)",
-                data=txt_rel,
-                file_name=f"{setor_ativo}_{dia_nome}_{dia_data_full.replace('/','_')}.txt",
-                mime="text/plain",
             )
