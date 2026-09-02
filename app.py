@@ -124,7 +124,7 @@ else:
 
 # --- SETORES ---
 setores_padrao = [
-    "Panificação - Pães / Roscas (Meta)",
+    "Separação",
     "Panificação",
     "Pré-Pesagem",
     "Confeitaria / Bolos Secos",
@@ -170,6 +170,16 @@ cores_bolos = {
     "CREMOSO": "background-color: #ca8a04; color: #000000; font-weight: bold;",
     "COBERTURA": "background-color: #b91c1c; color: #ffffff; font-weight: bold;",
 }
+
+tipos_separacao = [
+    "PÃES-ROSCAS",
+    "PANETTONES",
+    "PLACA",
+    "CASEIRO-INGLES",
+    "CREMOSO-COM COBERTURA",
+    "REDONDO-BROWNIE",
+    "BISCOITOS",
+]
 
 
 def colorir_linhas_bolo(row):
@@ -276,7 +286,13 @@ def exibir_botao_impressao_a4(titulo, df):
     linhas_html = ""
     for idx, row in df.iterrows():
         status = row.get("Status", "⏳ Pendente")
-        qtd = row.get("Qtd", row.get("Meta_Semanal", row.get("Saldo_Restante", "")))
+        qtd = row.get(
+            "Qtd",
+            row.get(
+                "Pedido Total",
+                row.get("Meta Semanal", row.get("Saldo Restante", "")),
+            ),
+        )
         uni = row.get("Unidade", "")
         prod = row.get("Produto", row.get("Descrição", ""))
         tipo = row.get("Tipo de Bolo", row.get("Item", ""))
@@ -293,7 +309,11 @@ def exibir_botao_impressao_a4(titulo, df):
         </tr>
         """
 
-    cabecalho_tipo = "<th>Código / Tipo</th>" if "Tipo de Bolo" in df.columns or "Item" in df.columns else ""
+    cabecalho_tipo = (
+        "<th>Código / Tipo</th>"
+        if "Tipo de Bolo" in df.columns or "Item" in df.columns
+        else ""
+    )
 
     html_a4 = f"""
     <!DOCTYPE html>
@@ -356,7 +376,9 @@ def exibir_botao_impressao_a4(titulo, df):
     </html>
     """
 
-    with st.expander("🖨️ Abrir Folha de Impressão A4 / Salvar PDF", expanded=False):
+    with st.expander(
+        "🖨️ Abrir Folha de Impressão A4 / Salvar PDF", expanded=False
+    ):
         components.html(html_a4, height=450, scrolling=True)
 
 
@@ -501,122 +523,168 @@ if termo_busca.strip():
 
 
 # =========================================================
-# LÓGICA ESPECIAL PARA SETOR DE META/SEPARAÇÃO (ABATIMENTO)
+# LÓGICA ESPECIAL PARA O SETOR DE SEPARAÇÃO (COM CUMULATIVO POR DIA)
 # =========================================================
-if "Meta" in setor_ativo or "Pães / Roscas" in setor_ativo:
-    st.markdown("### 📊 Meta Semanal x Lançamento Diário da Separação")
+if setor_ativo == "Separação" or "Meta" in setor_ativo:
+    st.markdown("### 📦 Separação - Controle por Categoria e Saldo Cumulativo")
 
-    # Módulo ADM de colar a tabela de Metas da Semana
-    if esolo_adm:
-        with st.expander("⚙️ Cadastrar/Editar Tabela de Meta Semanal (ADM)", expanded=False):
-            st.write("Copie do Excel (Colunas: Descrição | Item | Total) e cole abaixo:")
-            texto_meta_colado = st.text_area("Cole aqui a tabela do Excel:", height=150)
-            if st.button("💾 Salvar Meta Semanal da Tabela"):
-                if texto_meta_colado.strip():
-                    df_m = processar_texto_meta_planilha(texto_meta_colado)
-                    if "metas_semanais" not in db:
-                        db["metas_semanais"] = {}
-                    db["metas_semanais"][chave_semana] = df_m.to_dict("records")
-                    salvar_banco(db)
-                    st.success("Meta Semanal cadastrada com sucesso!")
-                    st.rerun()
+    abas_dias = st.tabs([item["label_aba"] for item in dias_semana_com_data])
 
-    meta_cadastrada = db.get("metas_semanais", {}).get(chave_semana, [])
+    for idx_dia, item_dia in enumerate(dias_semana_com_data):
+        dia_nome = item_dia["nome"]
+        dia_data_full = item_dia["data_completa"]
 
-    if not meta_cadastrada:
-        st.info("⏳ Nenhuma Meta Semanal cadastrada pelo ADM para este setor nesta semana.")
-    else:
-        df_metas = pd.DataFrame(meta_cadastrada)
+        with abas_dias[idx_dia]:
+            if not esolo_adm and not esta_publicado:
+                st.info(
+                    "⏳ A programação desta semana ainda não foi publicada pelo Administrador."
+                )
+                continue
 
-        st.write("### 📅 Selecione o dia para lançar ou consultar o saldo:")
-        abas_meta = st.tabs([item["label_aba"] for item in dias_semana_com_data])
+            st.markdown(f"#### 📅 Programação de {dia_nome} ({dia_data_full})")
 
-        for i, item_dia in enumerate(dias_semana_com_data):
-            dia_nome = item_dia["nome"]
-            dia_data_full = item_dia["data_completa"]
-            chave_dia_meta = f"{chave_semana}_{dia_nome}"
+            sub_abas_cat = st.tabs(tipos_separacao)
 
-            with abas_meta[i]:
-                st.markdown(f"#### 📌 Lançamentos de {dia_nome} ({dia_data_full})")
+            for idx_cat, cat_nome in enumerate(tipos_separacao):
+                with sub_abas_cat[idx_cat]:
+                    chave_base_cat = f"{chave_semana}_{cat_nome}"
 
-                # Calcular soma acumulada dos dias anteriores e do dia atual
-                lista_construida = []
-                for _, row in df_metas.iterrows():
-                    item_id = str(row["Item"])
-                    desc = row["Descrição"]
-                    meta_total = float(row["Meta_Semanal"])
+                    if esolo_adm:
+                        with st.expander(
+                            f"⚙️ Importar Pedido Total de {cat_nome} (ADM)",
+                            expanded=False,
+                        ):
+                            texto_colado = st.text_area(
+                                f"Cole do Excel (Descrição | Item | Total):",
+                                key=f"txt_{chave_base_cat}",
+                                height=100,
+                            )
+                            if st.button(
+                                f"💾 Cadastrar Total em {cat_nome}",
+                                key=f"btn_save_meta_{chave_base_cat}",
+                            ):
+                                if texto_colado.strip():
+                                    df_parsed = processar_texto_meta_planilha(
+                                        texto_colado
+                                    )
+                                    if "metas_semanais" not in db:
+                                        db["metas_semanais"] = {}
+                                    db["metas_semanais"][chave_base_cat] = (
+                                        df_parsed.to_dict("records")
+                                    )
+                                    salvar_banco(db)
+                                    st.success(f"Meta de {cat_nome} salva!")
+                                    st.rerun()
 
-                    # Soma produções de TODOS os dias da semana para este item
-                    soma_separada_semana = 0.0
-                    for d_nome in nomes_dias:
-                        ch_d = f"{chave_semana}_{d_nome}"
-                        lançamentos_dia = db.get("dados", {}).get(ch_d, {})
-                        if isinstance(lançamentos_dia, dict):
-                            soma_separada_semana += float(lançamentos_dia.get(item_id, 0.0))
-
-                    # Lançamento exclusivo do dia selecionado
-                    lancamento_hoje = 0.0
-                    dados_dia_dict = db.get("dados", {}).get(chave_dia_meta, {})
-                    if isinstance(dados_dia_dict, dict):
-                        lancamento_hoje = float(dados_dia_dict.get(item_id, 0.0))
-
-                    saldo_restante = meta_total - soma_separada_semana
-
-                    status_item = "✅ Concluído" if saldo_restante <= 0 else ("🔄 Em Progresso" if soma_separada_semana > 0 else "⏳ Pendente")
-
-                    lista_construida.append(
-                        {
-                            "Status": status_item,
-                            "Item": item_id,
-                            "Descrição": desc,
-                            "Meta Semanal": meta_total,
-                            "Total Separado (Acumulado)": soma_separada_semana,
-                            "Saldo Restante": saldo_restante,
-                            f"Separado em {dia_nome}": lancamento_hoje,
-                        }
+                    meta_cat = db.get("metas_semanais", {}).get(
+                        chave_base_cat, []
                     )
 
-                df_painel_dia = pd.DataFrame(lista_construida)
+                    if not meta_cat:
+                        st.info(
+                            f"Nenhum pedido inicial cadastrado para a categoria '{cat_nome}'."
+                        )
+                    else:
+                        df_meta_cat = pd.DataFrame(meta_cat)
+                        lista_painel = []
 
-                col_nome_hoje = f"Separado em {dia_nome}"
+                        for _, row in df_meta_cat.iterrows():
+                            cod_item = str(row["Item"])
+                            desc_item = row["Descrição"]
+                            pedido_total_semana = float(row["Meta_Semanal"])
 
-                if esolo_adm or esta_publicado:
-                    df_editado_meta = st.data_editor(
-                        df_painel_dia,
-                        disabled=[
-                            "Status",
-                            "Item",
-                            "Descrição",
-                            "Meta Semanal",
-                            "Total Separado (Acumulado)",
-                            "Saldo Restante",
-                        ],
-                        use_container_width=True,
-                        hide_index=True,
-                        key=f"editor_meta_{chave_dia_meta}",
-                    )
+                            separado_dias_anteriores = 0.0
+                            for d_prev_idx in range(idx_dia):
+                                dia_prev_nome = nomes_dias[d_prev_idx]
+                                ch_prev = f"{chave_base_cat}_{dia_prev_nome}"
+                                lançado_prev = (
+                                    db.get("dados", {})
+                                    .get(ch_prev, {})
+                                    .get(cod_item, 0.0)
+                                )
+                                separado_dias_anteriores += float(lançado_prev)
 
-                    if st.button(f"💾 Salvar Separação de {dia_nome}", key=f"btn_salvar_meta_{chave_dia_meta}"):
-                        if "dados" not in db:
-                            db["dados"] = {}
+                            meta_disponivel_hoje = max(
+                                0.0,
+                                pedido_total_semana - separado_dias_anteriores,
+                            )
 
-                        novos_lancamentos = {}
-                        for _, r in df_editado_meta.iterrows():
-                            cod_i = str(r["Item"])
-                            val_sep = float(r[col_nome_hoje])
-                            novos_lancamentos[cod_i] = val_sep
+                            chave_hoje = f"{chave_base_cat}_{dia_nome}"
+                            separado_hoje = float(
+                                db.get("dados", {})
+                                .get(chave_hoje, {})
+                                .get(cod_item, 0.0)
+                            )
 
-                        db["dados"][chave_dia_meta] = novos_lancamentos
-                        salvar_banco(db)
-                        st.success(f"Valores de {dia_nome} salvos e saldo atualizado!")
-                        st.rerun()
+                            saldo_para_amanha = max(
+                                0.0, meta_disponivel_hoje - separado_hoje
+                            )
 
-                    exibir_botao_impressao_a4(
-                        f"PANIFICAÇÃO / META - {dia_nome} ({dia_data_full})",
-                        df_painel_dia,
-                    )
-                else:
-                    st.info("⏳ A programação desta semana ainda não foi publicada pelo Administrador.")
+                            status = (
+                                "✅ Concluído"
+                                if saldo_para_amanha == 0
+                                else (
+                                    "🔄 Em Progresso"
+                                    if separado_hoje > 0
+                                    else "⏳ Pendente"
+                                )
+                            )
+
+                            lista_painel.append(
+                                {
+                                    "Status": status,
+                                    "Item": cod_item,
+                                    "Descrição": desc_item,
+                                    "Pedido Total": pedido_total_semana,
+                                    "Meta do Dia (Saldo Anterior)": meta_disponivel_hoje,
+                                    f"Separado em {dia_nome}": separado_hoje,
+                                    "Saldo p/ Próximo Dia": saldo_para_amanha,
+                                }
+                            )
+
+                        df_painel_cat = pd.DataFrame(lista_painel)
+                        col_edit_hoje = f"Separado em {dia_nome}"
+
+                        df_editado_cat = st.data_editor(
+                            df_painel_cat,
+                            disabled=[
+                                "Status",
+                                "Item",
+                                "Descrição",
+                                "Pedido Total",
+                                "Meta do Dia (Saldo Anterior)",
+                                "Saldo p/ Próximo Dia",
+                            ],
+                            use_container_width=True,
+                            hide_index=True,
+                            key=f"editor_{chave_base_cat}_{dia_nome}",
+                        )
+
+                        if st.button(
+                            f"💾 Salvar Separação - {cat_nome} ({dia_nome})",
+                            key=f"btn_save_sep_{chave_base_cat}_{dia_nome}",
+                        ):
+                            if "dados" not in db:
+                                db["dados"] = {}
+
+                            chave_hoje = f"{chave_base_cat}_{dia_nome}"
+                            novos_valores = {}
+                            for _, r in df_editado_cat.iterrows():
+                                novos_valores[str(r["Item"])] = float(
+                                    r[col_edit_hoje]
+                                )
+
+                            db["dados"][chave_hoje] = novos_valores
+                            salvar_banco(db)
+                            st.success(
+                                f"Separação de {cat_nome} atualizada! Saldo transferido para o próximo dia."
+                            )
+                            st.rerun()
+
+                        exibir_botao_impressao_a4(
+                            f"SEPARAÇÃO: {cat_nome} - {dia_nome} ({dia_data_full})",
+                            df_painel_cat,
+                        )
 
 # =========================================================
 # LÓGICA PADRÃO PARA OS DEMAIS SETORES
@@ -689,7 +757,11 @@ else:
                     with sub_abas[j + 1]:
                         chave_item = f"{chave_semana}_{dia_nome}_{tipo}"
                         dados_existentes = db["dados"].get(chave_item, [])
-                        df_atual = pd.DataFrame(dados_existentes) if isinstance(dados_existentes, list) else pd.DataFrame()
+                        df_atual = (
+                            pd.DataFrame(dados_existentes)
+                            if isinstance(dados_existentes, list)
+                            else pd.DataFrame()
+                        )
                         if df_atual.empty:
                             df_atual = pd.DataFrame(
                                 columns=["Status", "Qtd", "Unidade", "Produto"]
@@ -766,7 +838,11 @@ else:
                 # Setores Padrão
                 chave_item = f"{chave_semana}_{dia_nome}"
                 dados_existentes = db["dados"].get(chave_item, [])
-                df_atual = pd.DataFrame(dados_existentes) if isinstance(dados_existentes, list) else pd.DataFrame()
+                df_atual = (
+                    pd.DataFrame(dados_existentes)
+                    if isinstance(dados_existentes, list)
+                    else pd.DataFrame()
+                )
                 if df_atual.empty:
                     df_atual = pd.DataFrame(
                         columns=["Status", "Qtd", "Unidade", "Produto"]
