@@ -1,3 +1,5 @@
+import json
+import os
 from datetime import datetime, timedelta
 import pandas as pd
 import streamlit as st
@@ -40,9 +42,27 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# --- PERSISTÊNCIA DE DADOS (BANCO DE DADOS EM ARQUIVO) ---
+ARQUIVO_DADOS = "dados_pcp.json"
+
+
+def carregar_banco():
+    if os.path.exists(ARQUIVO_DADOS):
+        with open(ARQUIVO_DADOS, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {"publicados": {}, "dados": {}, "setores": []}
+
+
+def salvar_banco(db):
+    with open(ARQUIVO_DADOS, "w", encoding="utf-8") as f:
+        json.dump(db, f, ensure_ascii=False, indent=4)
+
+
+db = carregar_banco()
+
 st.title("🛒 PCP - Supermercados Alvorada")
 
-# --- CONTROLE DE ACESSO (PERFIL DE USUÁRIO) ---
+# --- CONTROLE DE ACESSO ---
 st.sidebar.header("🔐 Perfil de Acesso")
 perfil = st.sidebar.radio(
     "Acessar como:", ["👁️ Líder (Apenas Visualizar)", "⚙️ Administrador"]
@@ -51,15 +71,14 @@ perfil = st.sidebar.radio(
 esolo_adm = False
 if perfil == "⚙️ Administrador":
     senha = st.sidebar.text_input("Digite a senha de ADM:", type="password")
-    if senha == "1234":  # <--- Altere sua senha aqui!
+    if senha == "1234":
         esolo_adm = True
         st.sidebar.success("Acesso ADM Liberado!")
     else:
         if senha != "":
             st.sidebar.error("Senha incorreta!")
-        st.sidebar.info("Modo de visualização mantido até autenticar.")
 
-# Banner do modo ativo na tela
+# Banner de exibição
 if esolo_adm:
     st.markdown(
         "<div class='badge-modo' style='background-color: #d97706; color: white;'>⚙️ MODO ADMINISTRADOR - EDIÇÃO LIBERADA</div>",
@@ -67,20 +86,31 @@ if esolo_adm:
     )
 else:
     st.markdown(
-        "<div class='badge-modo' style='background-color: #009944; color: white;'>👁️ MODO LÍDER - APENAS VISUALIZAÇÃO</div>",
+        "<div class='badge-modo' style='background-color: #009944; color: white;'>👁️ MODO LÍDER - VISUALIZAÇÃO DE DADOS PUBLICADOS</div>",
         unsafe_allow_html=True,
     )
 
-# --- MEMÓRIA DO APP ---
-if (
-    "lista_setores" not in st.session_state
-    or "Panqueca" in st.session_state["lista_setores"]
-):
-    st.session_state["lista_setores"] = [
-        "Panificação",
-        "Pré-Pesagem",
-        "Confeitaria / Bolos Secos",
-    ]
+# --- SETORES ---
+setores_padrao = [
+    "Panificação",
+    "Pré-Pesagem",
+    "Confeitaria / Bolos Secos",
+    "Pratos Prontos",
+    "Pão de Queijo / Salgados Fritos",
+    "Salgados Assados",
+    "Biscoitão",
+    "Pizzas Congeladas",
+    "Bolos Congelados",
+    "Confeitaria / Sobremesas",
+    "Levain",
+    "Embalagem Congelada",
+]
+
+lista_setores = db.get("setores", [])
+if not lista_setores:
+    lista_setores = setores_padrao
+    db["setores"] = lista_setores
+    salvar_banco(db)
 
 hoje = datetime.now()
 inicio_semana_atual = hoje - timedelta(days=hoje.weekday())
@@ -118,8 +148,7 @@ cores_bolos = {
 
 def colorir_linhas_bolo(row):
     tipo = row["Tipo de Bolo"]
-    estilo = cores_bolos.get(tipo, "")
-    return [estilo] * len(row)
+    return [cores_bolos.get(tipo, "")] * len(row)
 
 
 def processar_texto_colado(texto):
@@ -138,7 +167,7 @@ def processar_texto_colado(texto):
     return pd.DataFrame(dados)
 
 
-# --- BARRA LATERAL (SELEÇÃO) ---
+# --- BARRA LATERAL ---
 st.sidebar.markdown("---")
 st.sidebar.header("🗓️ Período / Semana")
 semana_ativa = st.sidebar.selectbox(
@@ -147,38 +176,42 @@ semana_ativa = st.sidebar.selectbox(
 
 st.sidebar.markdown("---")
 st.sidebar.header("📂 Seleção de Setor")
-setor_ativo = st.sidebar.radio(
-    "Escolha a Programação:", st.session_state["lista_setores"]
-)
+setor_ativo = st.sidebar.radio("Escolha a Programação:", lista_setores)
 
-# Recursos exclusivos de ADM na Sidebar
+chave_semana = f"{semana_ativa}_{setor_ativo}"
+esta_publicado = db.get("publicados", {}).get(chave_semana, False)
+
+# Recursos exclusivos de ADM
 if esolo_adm:
     st.sidebar.markdown("---")
-    st.sidebar.header("➕ Criar Novo Setor")
-    novo_setor = st.sidebar.text_input(
-        "Nome do novo setor:", placeholder="Ex: Salgados..."
-    )
-    if st.sidebar.button("Criar Setor"):
-        if (
-            novo_setor.strip()
-            and novo_setor not in st.session_state["lista_setores"]
-        ):
-            st.session_state["lista_setores"].append(novo_setor.strip())
-            st.sidebar.success(f"Setor '{novo_setor}' criado!")
+    st.sidebar.header("🚀 Publicação aos Líderes")
+
+    if esta_publicado:
+        st.sidebar.success("✅ ESTA PROGRAMAÇÃO ESTÁ PUBLICADA!")
+        if st.sidebar.button("🔒 Desmarcar Publicação"):
+            db["publicados"][chave_semana] = False
+            salvar_banco(db)
+            st.rerun()
+    else:
+        st.sidebar.warning("⚠️ Programação não publicada.")
+        if st.sidebar.button("🚀 PUBLICAR PARA OS LÍDERES"):
+            db["publicados"][chave_semana] = True
+            salvar_banco(db)
+            st.sidebar.success("Publicado com sucesso!")
             st.rerun()
 
     st.sidebar.markdown("---")
-    st.sidebar.header("⚙️ Gestão de Dados")
-    if st.sidebar.button("🗑️ Excluir Programação desta Semana"):
-        chaves_para_remover = [
-            k
-            for k in st.session_state.keys()
-            if k.startswith(f"{semana_ativa}_{setor_ativo}")
-        ]
-        for k in chaves_para_remover:
-            del st.session_state[k]
-        st.sidebar.warning("Programação apagada!")
-        st.rerun()
+    st.sidebar.header("➕ Criar Novo Setor")
+    novo_setor = st.sidebar.text_input(
+        "Nome do setor:", placeholder="Ex: Salgados..."
+    )
+    if st.sidebar.button("Criar Setor"):
+        if novo_setor.strip() and novo_setor not in lista_setores:
+            lista_setores.append(novo_setor.strip())
+            db["setores"] = lista_setores
+            salvar_banco(db)
+            st.sidebar.success(f"Setor '{novo_setor}' criado!")
+            st.rerun()
 
 # --- HEADER ALVORADA ---
 st.markdown(
@@ -195,31 +228,35 @@ abas = st.tabs([f"🗓️ {dia[:3]}" for dia in dias_semana])
 
 for i, dia in enumerate(dias_semana):
     with abas[i]:
+        # VERIFICAÇÃO SE LÍDER PODE ENXERGAR
+        if not esolo_adm and not esta_publicado:
+            st.info(
+                "⏳ A programação desta semana ainda não foi publicada pelo Administrador."
+            )
+            continue
+
         if setor_ativo == "Confeitaria / Bolos Secos":
             st.markdown(f"### 📌 Confeitaria - {dia}")
 
             titulos_sub_abas = ["📋 Visão Geral"]
             for tipo in tipos_bolos:
-                chave = f"{semana_ativa}_{setor_ativo}_{dia}_{tipo}"
+                chave_item = f"{chave_semana}_{dia}_{tipo}"
                 tem_dados = (
-                    chave in st.session_state
-                    and not st.session_state[chave].empty
+                    chave_item in db["dados"] and len(db["dados"][chave_item]) > 0
                 )
                 indicador = "🟢" if tem_dados else "⚪"
                 titulos_sub_abas.append(f"{indicador} {tipo}")
 
             sub_abas = st.tabs(titulos_sub_abas)
 
-            # Visão Geral (Líderes e ADM)
+            # Visão Geral
             with sub_abas[0]:
                 lista_geral = []
                 for tipo in tipos_bolos:
-                    chave = f"{semana_ativa}_{setor_ativo}_{dia}_{tipo}"
-                    if (
-                        chave in st.session_state
-                        and not st.session_state[chave].empty
-                    ):
-                        df_temp = st.session_state[chave].copy()
+                    chave_item = f"{chave_semana}_{dia}_{tipo}"
+                    dados_salvos = db["dados"].get(chave_item, [])
+                    if dados_salvos:
+                        df_temp = pd.DataFrame(dados_salvos)
                         df_temp.insert(0, "Tipo de Bolo", tipo)
                         lista_geral.append(df_temp)
 
@@ -233,14 +270,16 @@ for i, dia in enumerate(dias_semana):
                         df_estilizado, use_container_width=True, hide_index=True
                     )
                 else:
-                    st.info(f"Nenhum bolo cadastrado para {dia} nesta semana.")
+                    st.info(f"Nenhum bolo cadastrado para {dia}.")
 
-            # Abas por Tipo de Bolo
+            # Tipos de Bolos
             for j, tipo in enumerate(tipos_bolos):
                 with sub_abas[j + 1]:
-                    chave_atual = f"{semana_ativa}_{setor_ativo}_{dia}_{tipo}"
-                    if chave_atual not in st.session_state:
-                        st.session_state[chave_atual] = pd.DataFrame(
+                    chave_item = f"{chave_semana}_{dia}_{tipo}"
+                    dados_existentes = db["dados"].get(chave_item, [])
+                    df_atual = pd.DataFrame(dados_existentes)
+                    if df_atual.empty:
+                        df_atual = pd.DataFrame(
                             columns=["Qtd", "Unidade", "Produto"]
                         )
 
@@ -250,43 +289,52 @@ for i, dia in enumerate(dias_semana):
                             st.markdown(f"**📋 Colar itens ({tipo}):**")
                             texto_colado = st.text_area(
                                 "Copie do Excel e cole:",
-                                key=f"input_{chave_atual}",
+                                key=f"input_{chave_item}",
                                 height=120,
                             )
                             if st.button(
-                                f"💾 Salvar {tipo}", key=f"btn_{chave_atual}"
+                                f"💾 Salvar {tipo}", key=f"btn_{chave_item}"
                             ):
                                 if texto_colado.strip():
                                     df_novo = processar_texto_colado(texto_colado)
-                                    st.session_state[chave_atual] = df_novo
-                                    st.success(f"{tipo} atualizado!")
+                                    db["dados"][chave_item] = df_novo.to_dict(
+                                        "records"
+                                    )
+                                    salvar_banco(db)
+                                    st.success(f"{tipo} salvo!")
                                     st.rerun()
 
                         with col_tabela:
                             st.markdown(f"**Tipo de Bolo: {tipo}**")
                             df_editado = st.data_editor(
-                                st.session_state[chave_atual],
+                                df_atual,
                                 num_rows="dynamic",
                                 use_container_width=True,
-                                key=f"editor_{chave_atual}",
+                                key=f"editor_{chave_item}",
                             )
-                            st.session_state[chave_atual] = df_editado
+                            if st.button(
+                                f"💾 Salvar Edição Manual ({tipo})",
+                                key=f"save_manual_{chave_item}",
+                            ):
+                                db["dados"][chave_item] = df_editado.to_dict(
+                                    "records"
+                                )
+                                salvar_banco(db)
+                                st.success("Alterações salvas!")
+                                st.rerun()
                     else:
-                        # Visão do Líder (Apenas Leitura)
                         st.markdown(f"**Tipo de Bolo: {tipo}**")
                         st.dataframe(
-                            st.session_state[chave_atual],
-                            use_container_width=True,
-                            hide_index=True,
+                            df_atual, use_container_width=True, hide_index=True
                         )
 
         else:
-            # Setores Padrão (Panificação / Pré-Pesagem)
-            chave_atual = f"{semana_ativa}_{setor_ativo}_{dia}"
-            if chave_atual not in st.session_state:
-                st.session_state[chave_atual] = pd.DataFrame(
-                    columns=["Qtd", "Unidade", "Produto"]
-                )
+            # Setores Padrão
+            chave_item = f"{chave_semana}_{dia}"
+            dados_existentes = db["dados"].get(chave_item, [])
+            df_atual = pd.DataFrame(dados_existentes)
+            if df_atual.empty:
+                df_atual = pd.DataFrame(columns=["Qtd", "Unidade", "Produto"])
 
             if esolo_adm:
                 col_tabela, col_colar = st.columns([2, 1])
@@ -294,32 +342,37 @@ for i, dia in enumerate(dias_semana):
                     st.markdown(f"**📋 Colar itens para {dia}:**")
                     texto_colado = st.text_area(
                         "Copie do Excel e cole aqui:",
-                        key=f"input_{chave_atual}",
+                        key=f"input_{chave_item}",
                         height=120,
                     )
                     if st.button(
-                        f"💾 Importar para {dia}", key=f"btn_{chave_atual}"
+                        f"💾 Importar para {dia}", key=f"btn_{chave_item}"
                     ):
                         if texto_colado.strip():
                             df_novo = processar_texto_colado(texto_colado)
-                            st.session_state[chave_atual] = df_novo
-                            st.success(f"Programação de {dia} atualizada!")
+                            db["dados"][chave_item] = df_novo.to_dict("records")
+                            salvar_banco(db)
+                            st.success(f"Programação de {dia} salva!")
                             st.rerun()
 
                 with col_tabela:
                     st.markdown(f"### 📌 Programação: {dia}")
                     df_editado = st.data_editor(
-                        st.session_state[chave_atual],
+                        df_atual,
                         num_rows="dynamic",
                         use_container_width=True,
-                        key=f"editor_{chave_atual}",
+                        key=f"editor_{chave_item}",
                     )
-                    st.session_state[chave_atual] = df_editado
+                    if st.button(
+                        f"💾 Salvar Alterações de {dia}",
+                        key=f"save_manual_{chave_item}",
+                    ):
+                        db["dados"][chave_item] = df_editado.to_dict("records")
+                        salvar_banco(db)
+                        st.success("Programação salva!")
+                        st.rerun()
             else:
-                # Visão do Líder (Apenas Leitura)
                 st.markdown(f"### 📌 Programação: {dia}")
                 st.dataframe(
-                    st.session_state[chave_atual],
-                    use_container_width=True,
-                    hide_index=True,
+                    df_atual, use_container_width=True, hide_index=True
                 )
