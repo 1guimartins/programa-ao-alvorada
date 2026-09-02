@@ -11,11 +11,10 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Estilização Adaptável + Aumento de Fontes + Ajuste de Quebra de Texto
+# Estilização Adaptável + Fontes Maiores
 st.markdown(
     """
     <style>
-    /* Estilo do Cabeçalho Principal */
     .header-alvorada {
         background: linear-gradient(90deg, #FF6600 0%, #009944 100%);
         color: white !important;
@@ -35,25 +34,12 @@ st.markdown(
         margin-bottom: 15px;
     }
 
-    /* Aumentar fonte geral do app no mobile e desktop */
+    /* Aumenta a fonte geral da página */
     html, body, [class*="css"], .stMarkdown, p, span {
         font-size: 16px !important;
     }
 
-    /* Forçar quebra de texto dentro das tabelas para não cortar nomes em celulares */
-    div[data-testid="stDataFrame"] div[role="gridcell"] {
-        white-space: normal !important;
-        word-wrap: break-word !important;
-        font-size: 15px !important;
-        line-height: 1.4 !important;
-    }
-    
-    div[data-testid="stDataFrame"] div[role="columnheader"] {
-        font-size: 16px !important;
-        font-weight: bold !important;
-    }
-
-    /* Melhora navegação de abas no celular */
+    /* Melhora abas no celular */
     button[data-baseweb="tab"] {
         font-size: 15px !important;
         padding-left: 8px !important;
@@ -68,6 +54,15 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+# --- CONFIGURAÇÃO DE COLUNAS COM QUEBRA DE LINHA ATIVADA ---
+config_colunas = {
+    "Qtd": st.column_config.TextColumn("Qtd", width="small"),
+    "Unidade": st.column_config.TextColumn("Unidade", width="small"),
+    "Produto": st.column_config.TextColumn(
+        "Produto", width="large"
+    ),  # Largura expandida para caber nomes longos
+}
 
 # --- PERSISTÊNCIA DE DADOS ---
 ARQUIVO_DADOS = "dados_pcp.json"
@@ -142,7 +137,6 @@ if not lista_setores:
 hoje = datetime.now()
 inicio_semana_atual = hoje - timedelta(days=hoje.weekday())
 
-# Mapeamento de semanas e datas
 opcoes_semanas = []
 datas_semanas = {}
 
@@ -195,7 +189,6 @@ semana_ativa = st.sidebar.selectbox(
     "Selecione uma semana:", opcoes_semanas, index=4
 )
 
-# Cálculo dinâmico das datas dos dias da semana
 data_inicio_selecionada = datas_semanas[semana_ativa]
 dias_semana_com_data = []
 nomes_dias = [
@@ -368,6 +361,7 @@ for i, item_dia in enumerate(dias_semana_com_data):
                                 df_atual,
                                 num_rows="dynamic",
                                 use_container_width=True,
+                                column_config=config_colunas,
                                 key=f"editor_{chave_item}",
                             )
                             if st.button(
@@ -383,7 +377,10 @@ for i, item_dia in enumerate(dias_semana_com_data):
                     else:
                         st.markdown(f"**Tipo de Bolo: {tipo}**")
                         st.dataframe(
-                            df_atual, use_container_width=True, hide_index=True
+                            df_atual,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config=config_colunas,
                         )
 
         else:
@@ -408,6 +405,9 @@ for i, item_dia in enumerate(dias_semana_com_data):
                     ):
                         if texto_colado.strip():
                             df_novo = processar_texto_colado(texto_colado)
+                            db["dados"][chave_item] = db["dados"].get(
+                                chave_item, []
+                            )
                             db["dados"][chave_item] = df_novo.to_dict("records")
                             salvar_banco(db)
                             st.success(f"Programação de {dia_nome} salva!")
@@ -419,6 +419,7 @@ for i, item_dia in enumerate(dias_semana_com_data):
                         df_atual,
                         num_rows="dynamic",
                         use_container_width=True,
+                        column_config=config_colunas,
                         key=f"editor_{chave_item}",
                     )
                     if st.button(
@@ -432,5 +433,8 @@ for i, item_dia in enumerate(dias_semana_com_data):
             else:
                 st.markdown(f"### 📌 Programação: {dia_nome} - {dia_data_full}")
                 st.dataframe(
-                    df_atual, use_container_width=True, hide_index=True
+                    df_atual,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=config_colunas,
                 )
