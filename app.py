@@ -11,16 +11,16 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Estilização Adaptável (Luz e Sombra)
+# Estilização Adaptável + Aumento de Fontes + Ajuste de Quebra de Texto
 st.markdown(
     """
     <style>
-    /* Usa as cores do próprio tema do usuário */
+    /* Estilo do Cabeçalho Principal */
     .header-alvorada {
         background: linear-gradient(90deg, #FF6600 0%, #009944 100%);
         color: white !important;
         text-align: center;
-        padding: 12px;
+        padding: 14px;
         border-radius: 8px;
         font-weight: bold;
         box-shadow: 0px 4px 10px rgba(0,0,0,0.15);
@@ -28,15 +28,41 @@ st.markdown(
     }
     .badge-modo {
         text-align: center;
-        padding: 8px;
+        padding: 10px;
         border-radius: 6px;
         font-weight: bold;
+        font-size: 16px !important;
         margin-bottom: 15px;
     }
-    /* Ajusta tamanho para telas pequenas */
+
+    /* Aumentar fonte geral do app no mobile e desktop */
+    html, body, [class*="css"], .stMarkdown, p, span {
+        font-size: 16px !important;
+    }
+
+    /* Forçar quebra de texto dentro das tabelas para não cortar nomes em celulares */
+    div[data-testid="stDataFrame"] div[role="gridcell"] {
+        white-space: normal !important;
+        word-wrap: break-word !important;
+        font-size: 15px !important;
+        line-height: 1.4 !important;
+    }
+    
+    div[data-testid="stDataFrame"] div[role="columnheader"] {
+        font-size: 16px !important;
+        font-weight: bold !important;
+    }
+
+    /* Melhora navegação de abas no celular */
+    button[data-baseweb="tab"] {
+        font-size: 15px !important;
+        padding-left: 8px !important;
+        padding-right: 8px !important;
+    }
+
     @media (max-width: 768px) {
-        .stDataFrame { font-size: 13px; }
-        h2 { font-size: 18px !important; }
+        h2 { font-size: 20px !important; }
+        h3 { font-size: 18px !important; }
     }
     </style>
     """,
@@ -79,7 +105,7 @@ if perfil == "⚙️ Administrador":
         if senha != "":
             st.sidebar.error("Senha incorreta!")
 
-# Banners com alto contraste garantido em telas claras e escuras
+# Banners
 if esolo_adm:
     st.markdown(
         "<div class='badge-modo' style='background-color: #d97706; color: #ffffff;'>⚙️ MODO ADMINISTRADOR - EDIÇÃO LIBERADA</div>",
@@ -116,7 +142,10 @@ if not lista_setores:
 hoje = datetime.now()
 inicio_semana_atual = hoje - timedelta(days=hoje.weekday())
 
+# Mapeamento de semanas e datas
 opcoes_semanas = []
+datas_semanas = {}
+
 for i in range(-4, 5):
     inicio_sem = inicio_semana_atual + timedelta(weeks=i)
     fim_sem = inicio_sem + timedelta(days=6)
@@ -124,16 +153,7 @@ for i in range(-4, 5):
     if i == 0:
         label += " (Atual)"
     opcoes_semanas.append(label)
-
-dias_semana = [
-    "Segunda-Feira",
-    "Terça-Feira",
-    "Quarta-Feira",
-    "Quinta-Feira",
-    "Sexta-Feira",
-    "Sábado",
-    "Domingo",
-]
+    datas_semanas[label] = inicio_sem
 
 tipos_bolos = ["PLACA", "REDONDO", "COBERTURA", "CREMOSO", "INGLÊS", "CASEIRO"]
 
@@ -175,6 +195,30 @@ semana_ativa = st.sidebar.selectbox(
     "Selecione uma semana:", opcoes_semanas, index=4
 )
 
+# Cálculo dinâmico das datas dos dias da semana
+data_inicio_selecionada = datas_semanas[semana_ativa]
+dias_semana_com_data = []
+nomes_dias = [
+    "Segunda-Feira",
+    "Terça-Feira",
+    "Quarta-Feira",
+    "Quinta-Feira",
+    "Sexta-Feira",
+    "Sábado",
+    "Domingo",
+]
+
+for idx, nome_dia in enumerate(nomes_dias):
+    data_dia = data_inicio_selecionada + timedelta(days=idx)
+    dias_semana_com_data.append(
+        {
+            "nome": nome_dia,
+            "data_curta": data_dia.strftime("%d/%m"),
+            "data_completa": data_dia.strftime("%d/%m/%Y"),
+            "label_aba": f"{nome_dia[:3]} ({data_dia.strftime('%d/%m')})",
+        }
+    )
+
 st.sidebar.markdown("---")
 st.sidebar.header("📂 Seleção de Setor")
 setor_ativo = st.sidebar.radio("Escolha a Programação:", lista_setores)
@@ -201,7 +245,7 @@ if esolo_adm:
             st.sidebar.success("Publicado com sucesso!")
             st.rerun()
 
-    if st.sidebar.button("🚀 PUBLICAR ALL SETORES DA SEMANA"):
+    if st.sidebar.button("🚀 PUBLICAR TODOS OS SETORES DA SEMANA"):
         for s in lista_setores:
             db["publicados"][f"{semana_ativa}_{s}"] = True
         salvar_banco(db)
@@ -230,11 +274,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# --- DIAS DA SEMANA ---
+# --- DIAS DA SEMANA COM DATA ---
 st.write("### 📅 Selecione o dia:")
-abas = st.tabs([f"🗓️ {dia[:3]}" for dia in dias_semana])
+abas = st.tabs([item["label_aba"] for item in dias_semana_com_data])
 
-for i, dia in enumerate(dias_semana):
+for i, item_dia in enumerate(dias_semana_com_data):
+    dia_nome = item_dia["nome"]
+    dia_data_full = item_dia["data_completa"]
+
     with abas[i]:
         if not esolo_adm and not esta_publicado:
             st.info(
@@ -243,11 +290,11 @@ for i, dia in enumerate(dias_semana):
             continue
 
         if setor_ativo == "Confeitaria / Bolos Secos":
-            st.markdown(f"### 📌 Confeitaria - {dia}")
+            st.markdown(f"### 📌 Confeitaria: {dia_nome} - {dia_data_full}")
 
             titulos_sub_abas = ["📋 Visão Geral"]
             for tipo in tipos_bolos:
-                chave_item = f"{chave_semana}_{dia}_{tipo}"
+                chave_item = f"{chave_semana}_{dia_nome}_{tipo}"
                 tem_dados = (
                     chave_item in db["dados"] and len(db["dados"][chave_item]) > 0
                 )
@@ -260,7 +307,7 @@ for i, dia in enumerate(dias_semana):
             with sub_abas[0]:
                 lista_geral = []
                 for tipo in tipos_bolos:
-                    chave_item = f"{chave_semana}_{dia}_{tipo}"
+                    chave_item = f"{chave_semana}_{dia_nome}_{tipo}"
                     dados_salvos = db["dados"].get(chave_item, [])
                     if dados_salvos:
                         df_temp = pd.DataFrame(dados_salvos)
@@ -269,7 +316,9 @@ for i, dia in enumerate(dias_semana):
 
                 if lista_geral:
                     df_consolidado = pd.concat(lista_geral, ignore_index=True)
-                    st.success(f"**Resumo de Produção para {dia}:**")
+                    st.success(
+                        f"**Resumo de Produção para {dia_nome} ({dia_data_full}):**"
+                    )
                     df_estilizado = df_consolidado.style.apply(
                         colorir_linhas_bolo, axis=1
                     )
@@ -277,12 +326,14 @@ for i, dia in enumerate(dias_semana):
                         df_estilizado, use_container_width=True, hide_index=True
                     )
                 else:
-                    st.info(f"Nenhum bolo cadastrado para {dia}.")
+                    st.info(
+                        f"Nenhum bolo cadastrado para {dia_nome} ({dia_data_full})."
+                    )
 
             # Tipos de Bolos
             for j, tipo in enumerate(tipos_bolos):
                 with sub_abas[j + 1]:
-                    chave_item = f"{chave_semana}_{dia}_{tipo}"
+                    chave_item = f"{chave_semana}_{dia_nome}_{tipo}"
                     dados_existentes = db["dados"].get(chave_item, [])
                     df_atual = pd.DataFrame(dados_existentes)
                     if df_atual.empty:
@@ -337,7 +388,7 @@ for i, dia in enumerate(dias_semana):
 
         else:
             # Setores Padrão
-            chave_item = f"{chave_semana}_{dia}"
+            chave_item = f"{chave_semana}_{dia_nome}"
             dados_existentes = db["dados"].get(chave_item, [])
             df_atual = pd.DataFrame(dados_existentes)
             if df_atual.empty:
@@ -346,24 +397,24 @@ for i, dia in enumerate(dias_semana):
             if esolo_adm:
                 col_tabela, col_colar = st.columns([2, 1])
                 with col_colar:
-                    st.markdown(f"**📋 Colar itens para {dia}:**")
+                    st.markdown(f"**📋 Colar itens para {dia_nome}:**")
                     texto_colado = st.text_area(
                         "Copie do Excel e cole aqui:",
                         key=f"input_{chave_item}",
                         height=120,
                     )
                     if st.button(
-                        f"💾 Importar para {dia}", key=f"btn_{chave_item}"
+                        f"💾 Importar para {dia_nome}", key=f"btn_{chave_item}"
                     ):
                         if texto_colado.strip():
                             df_novo = processar_texto_colado(texto_colado)
                             db["dados"][chave_item] = df_novo.to_dict("records")
                             salvar_banco(db)
-                            st.success(f"Programação de {dia} salva!")
+                            st.success(f"Programação de {dia_nome} salva!")
                             st.rerun()
 
                 with col_tabela:
-                    st.markdown(f"### 📌 Programação: {dia}")
+                    st.markdown(f"### 📌 Programação: {dia_nome} - {dia_data_full}")
                     df_editado = st.data_editor(
                         df_atual,
                         num_rows="dynamic",
@@ -371,7 +422,7 @@ for i, dia in enumerate(dias_semana):
                         key=f"editor_{chave_item}",
                     )
                     if st.button(
-                        f"💾 Salvar Alterações de {dia}",
+                        f"💾 Salvar Alterações de {dia_nome}",
                         key=f"save_manual_{chave_item}",
                     ):
                         db["dados"][chave_item] = df_editado.to_dict("records")
@@ -379,7 +430,7 @@ for i, dia in enumerate(dias_semana):
                         st.success("Programação salva!")
                         st.rerun()
             else:
-                st.markdown(f"### 📌 Programação: {dia}")
+                st.markdown(f"### 📌 Programação: {dia_nome} - {dia_data_full}")
                 st.dataframe(
                     df_atual, use_container_width=True, hide_index=True
                 )
