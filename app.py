@@ -9,7 +9,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Estilização
+# Estilização Alvorada
 st.markdown(
     """
     <style>
@@ -24,6 +24,13 @@ st.markdown(
         box-shadow: 0px 4px 10px rgba(0,0,0,0.3);
         margin-bottom: 20px;
     }
+    .badge-modo {
+        text-align: center;
+        padding: 6px;
+        border-radius: 5px;
+        font-weight: bold;
+        margin-bottom: 15px;
+    }
     @media (max-width: 768px) {
         .stDataFrame { font-size: 12px; }
         h2 { font-size: 18px !important; }
@@ -35,9 +42,40 @@ st.markdown(
 
 st.title("🛒 PCP - Supermercados Alvorada")
 
-# --- CORREÇÃO DA LISTA DE SETORES ---
-# Define os setores padrão sem puxar nomes antigos do cache
-if "lista_setores" not in st.session_state or "Panqueca" in st.session_state["lista_setores"]:
+# --- CONTROLE DE ACESSO (PERFIL DE USUÁRIO) ---
+st.sidebar.header("🔐 Perfil de Acesso")
+perfil = st.sidebar.radio(
+    "Acessar como:", ["👁️ Líder (Apenas Visualizar)", "⚙️ Administrador"]
+)
+
+esolo_adm = False
+if perfil == "⚙️ Administrador":
+    senha = st.sidebar.text_input("Digite a senha de ADM:", type="password")
+    if senha == "1234":  # <--- Altere sua senha aqui!
+        esolo_adm = True
+        st.sidebar.success("Acesso ADM Liberado!")
+    else:
+        if senha != "":
+            st.sidebar.error("Senha incorreta!")
+        st.sidebar.info("Modo de visualização mantido até autenticar.")
+
+# Banner do modo ativo na tela
+if esolo_adm:
+    st.markdown(
+        "<div class='badge-modo' style='background-color: #d97706; color: white;'>⚙️ MODO ADMINISTRADOR - EDIÇÃO LIBERADA</div>",
+        unsafe_allow_html=True,
+    )
+else:
+    st.markdown(
+        "<div class='badge-modo' style='background-color: #009944; color: white;'>👁️ MODO LÍDER - APENAS VISUALIZAÇÃO</div>",
+        unsafe_allow_html=True,
+    )
+
+# --- MEMÓRIA DO APP ---
+if (
+    "lista_setores" not in st.session_state
+    or "Panqueca" in st.session_state["lista_setores"]
+):
     st.session_state["lista_setores"] = [
         "Panificação",
         "Pré-Pesagem",
@@ -100,7 +138,8 @@ def processar_texto_colado(texto):
     return pd.DataFrame(dados)
 
 
-# --- BARRA LATERAL ---
+# --- BARRA LATERAL (SELEÇÃO) ---
+st.sidebar.markdown("---")
 st.sidebar.header("🗓️ Período / Semana")
 semana_ativa = st.sidebar.selectbox(
     "Selecione uma semana:", opcoes_semanas, index=4
@@ -112,43 +151,34 @@ setor_ativo = st.sidebar.radio(
     "Escolha a Programação:", st.session_state["lista_setores"]
 )
 
-st.sidebar.markdown("---")
-st.sidebar.header("➕ Criar Novo Setor")
-novo_setor = st.sidebar.text_input(
-    "Nome do novo setor:", placeholder="Ex: Salgados, Embalagem..."
-)
-if st.sidebar.button("Criar Setor"):
-    if novo_setor.strip() and novo_setor not in st.session_state["lista_setores"]:
-        st.session_state["lista_setores"].append(novo_setor.strip())
-        st.sidebar.success(f"Setor '{novo_setor}' criado!")
+# Recursos exclusivos de ADM na Sidebar
+if esolo_adm:
+    st.sidebar.markdown("---")
+    st.sidebar.header("➕ Criar Novo Setor")
+    novo_setor = st.sidebar.text_input(
+        "Nome do novo setor:", placeholder="Ex: Salgados..."
+    )
+    if st.sidebar.button("Criar Setor"):
+        if (
+            novo_setor.strip()
+            and novo_setor not in st.session_state["lista_setores"]
+        ):
+            st.session_state["lista_setores"].append(novo_setor.strip())
+            st.sidebar.success(f"Setor '{novo_setor}' criado!")
+            st.rerun()
+
+    st.sidebar.markdown("---")
+    st.sidebar.header("⚙️ Gestão de Dados")
+    if st.sidebar.button("🗑️ Excluir Programação desta Semana"):
+        chaves_para_remover = [
+            k
+            for k in st.session_state.keys()
+            if k.startswith(f"{semana_ativa}_{setor_ativo}")
+        ]
+        for k in chaves_para_remover:
+            del st.session_state[k]
+        st.sidebar.warning("Programação apagada!")
         st.rerun()
-
-st.sidebar.markdown("---")
-st.sidebar.header("⚙️ Gestão da Semana")
-
-chave_pub = f"publicado_{semana_ativa}_{setor_ativo}"
-if chave_pub not in st.session_state:
-    st.session_state[chave_pub] = False
-
-if st.session_state[chave_pub]:
-    st.sidebar.success("✅ Esta semana está PUBLICADA!")
-    if st.sidebar.button("🔓 Desproteger para Editar"):
-        st.session_state[chave_pub] = False
-        st.rerun()
-else:
-    if st.sidebar.button("🚀 Publicar Semana Inteira"):
-        st.session_state[chave_pub] = True
-        st.sidebar.success("Semana publicada aos líderes!")
-        st.rerun()
-
-if st.sidebar.button("🗑️ Excluir Programação desta Semana"):
-    chaves_para_remover = [
-        k for k in st.session_state.keys() if k.startswith(f"{semana_ativa}_{setor_ativo}")
-    ]
-    for k in chaves_para_remover:
-        del st.session_state[k]
-    st.sidebar.warning("Programação da semana apagada!")
-    st.rerun()
 
 # --- HEADER ALVORADA ---
 st.markdown(
@@ -180,7 +210,7 @@ for i, dia in enumerate(dias_semana):
 
             sub_abas = st.tabs(titulos_sub_abas)
 
-            # --- VISÃO GERAL ---
+            # Visão Geral (Líderes e ADM)
             with sub_abas[0]:
                 lista_geral = []
                 for tipo in tipos_bolos:
@@ -205,7 +235,7 @@ for i, dia in enumerate(dias_semana):
                 else:
                     st.info(f"Nenhum bolo cadastrado para {dia} nesta semana.")
 
-            # --- TIPOS INDIVIDUAIS ---
+            # Abas por Tipo de Bolo
             for j, tipo in enumerate(tipos_bolos):
                 with sub_abas[j + 1]:
                     chave_atual = f"{semana_ativa}_{setor_ativo}_{dia}_{tipo}"
@@ -214,70 +244,82 @@ for i, dia in enumerate(dias_semana):
                             columns=["Qtd", "Unidade", "Produto"]
                         )
 
-                    col_tabela, col_colar = st.columns([2, 1])
+                    if esolo_adm:
+                        col_tabela, col_colar = st.columns([2, 1])
+                        with col_colar:
+                            st.markdown(f"**📋 Colar itens ({tipo}):**")
+                            texto_colado = st.text_area(
+                                "Copie do Excel e cole:",
+                                key=f"input_{chave_atual}",
+                                height=120,
+                            )
+                            if st.button(
+                                f"💾 Salvar {tipo}", key=f"btn_{chave_atual}"
+                            ):
+                                if texto_colado.strip():
+                                    df_novo = processar_texto_colado(texto_colado)
+                                    st.session_state[chave_atual] = df_novo
+                                    st.success(f"{tipo} atualizado!")
+                                    st.rerun()
 
-                    with col_colar:
-                        st.markdown(f"**📋 Colar itens ({tipo}):**")
-                        texto_colado = st.text_area(
-                            "Copie do Excel e cole:",
-                            key=f"input_{chave_atual}",
-                            height=120,
-                            placeholder=f"Cole itens de {tipo}...",
-                        )
-
-                        if st.button(
-                            f"💾 Salvar {tipo}", key=f"btn_{chave_atual}"
-                        ):
-                            if texto_colado.strip():
-                                df_novo = processar_texto_colado(texto_colado)
-                                st.session_state[chave_atual] = df_novo
-                                st.success(f"{tipo} atualizado!")
-                                st.rerun()
-
-                    with col_tabela:
+                        with col_tabela:
+                            st.markdown(f"**Tipo de Bolo: {tipo}**")
+                            df_editado = st.data_editor(
+                                st.session_state[chave_atual],
+                                num_rows="dynamic",
+                                use_container_width=True,
+                                key=f"editor_{chave_atual}",
+                            )
+                            st.session_state[chave_atual] = df_editado
+                    else:
+                        # Visão do Líder (Apenas Leitura)
                         st.markdown(f"**Tipo de Bolo: {tipo}**")
-                        df_editado = st.data_editor(
+                        st.dataframe(
                             st.session_state[chave_atual],
-                            num_rows="dynamic",
                             use_container_width=True,
-                            key=f"editor_{chave_atual}",
+                            hide_index=True,
                         )
-                        st.session_state[chave_atual] = df_editado
 
         else:
-            # Setores Padrão
+            # Setores Padrão (Panificação / Pré-Pesagem)
             chave_atual = f"{semana_ativa}_{setor_ativo}_{dia}"
             if chave_atual not in st.session_state:
                 st.session_state[chave_atual] = pd.DataFrame(
                     columns=["Qtd", "Unidade", "Produto"]
                 )
 
-            col_tabela, col_colar = st.columns([2, 1])
+            if esolo_adm:
+                col_tabela, col_colar = st.columns([2, 1])
+                with col_colar:
+                    st.markdown(f"**📋 Colar itens para {dia}:**")
+                    texto_colado = st.text_area(
+                        "Copie do Excel e cole aqui:",
+                        key=f"input_{chave_atual}",
+                        height=120,
+                    )
+                    if st.button(
+                        f"💾 Importar para {dia}", key=f"btn_{chave_atual}"
+                    ):
+                        if texto_colado.strip():
+                            df_novo = processar_texto_colado(texto_colado)
+                            st.session_state[chave_atual] = df_novo
+                            st.success(f"Programação de {dia} atualizada!")
+                            st.rerun()
 
-            with col_colar:
-                st.markdown(f"**📋 Colar itens para {dia}:**")
-                texto_colado = st.text_area(
-                    "Copie do Excel e cole aqui:",
-                    key=f"input_{chave_atual}",
-                    height=120,
-                    placeholder="Cole aqui (Ctrl+V)...",
-                )
-
-                if st.button(
-                    f"💾 Importar para {dia}", key=f"btn_{chave_atual}"
-                ):
-                    if texto_colado.strip():
-                        df_novo = processar_texto_colado(texto_colado)
-                        st.session_state[chave_atual] = df_novo
-                        st.success(f"Programação de {dia} atualizada!")
-                        st.rerun()
-
-            with col_tabela:
+                with col_tabela:
+                    st.markdown(f"### 📌 Programação: {dia}")
+                    df_editado = st.data_editor(
+                        st.session_state[chave_atual],
+                        num_rows="dynamic",
+                        use_container_width=True,
+                        key=f"editor_{chave_atual}",
+                    )
+                    st.session_state[chave_atual] = df_editado
+            else:
+                # Visão do Líder (Apenas Leitura)
                 st.markdown(f"### 📌 Programação: {dia}")
-                df_editado = st.data_editor(
+                st.dataframe(
                     st.session_state[chave_atual],
-                    num_rows="dynamic",
                     use_container_width=True,
-                    key=f"editor_{chave_atual}",
+                    hide_index=True,
                 )
-                st.session_state[chave_atual] = df_editado
