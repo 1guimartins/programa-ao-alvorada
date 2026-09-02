@@ -74,7 +74,7 @@ config_colunas = {
     "Produto": st.column_config.TextColumn("Produto", width="large"),
 }
 
-# --- PERSISTÊNCIA DE DADOS (CRIAÇÃO AUTOMÁTICA DO JSON) ---
+# --- PERSISTÊNCIA DE DADOS ---
 ARQUIVO_DADOS = "dados_pcp.json"
 
 
@@ -548,6 +548,8 @@ if setor_ativo == "Separação" or "Meta" in setor_ativo:
             for idx_cat, cat_nome in enumerate(tipos_separacao):
                 with sub_abas_cat[idx_cat]:
                     chave_base_cat = f"{chave_semana}_{cat_nome}"
+                    # Chave única adicionando o dia para evitar 'StreamlitDuplicateElementKey'
+                    chave_elemento_dia = f"{chave_base_cat}_{dia_nome}"
 
                     if esolo_adm:
                         with st.expander(
@@ -556,12 +558,12 @@ if setor_ativo == "Separação" or "Meta" in setor_ativo:
                         ):
                             texto_colado = st.text_area(
                                 f"Cole do Excel (Descrição | Item | Total):",
-                                key=f"txt_{chave_base_cat}",
+                                key=f"txt_{chave_elemento_dia}",
                                 height=100,
                             )
                             if st.button(
                                 f"💾 Cadastrar Total em {cat_nome}",
-                                key=f"btn_save_meta_{chave_base_cat}",
+                                key=f"btn_save_meta_{chave_elemento_dia}",
                             ):
                                 if texto_colado.strip():
                                     df_parsed = processar_texto_meta_planilha(
@@ -657,12 +659,12 @@ if setor_ativo == "Separação" or "Meta" in setor_ativo:
                             ],
                             use_container_width=True,
                             hide_index=True,
-                            key=f"editor_{chave_base_cat}_{dia_nome}",
+                            key=f"editor_{chave_elemento_dia}",
                         )
 
                         if st.button(
                             f"💾 Salvar Separação - {cat_nome} ({dia_nome})",
-                            key=f"btn_save_sep_{chave_base_cat}_{dia_nome}",
+                            key=f"btn_save_sep_{chave_elemento_dia}",
                         ):
                             if "dados" not in db:
                                 db["dados"] = {}
