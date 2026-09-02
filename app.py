@@ -11,30 +11,31 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Estilização Alvorada
+# Estilização Adaptável (Luz e Sombra)
 st.markdown(
     """
     <style>
-    .stApp { background-color: #0f172a; }
+    /* Usa as cores do próprio tema do usuário */
     .header-alvorada {
         background: linear-gradient(90deg, #FF6600 0%, #009944 100%);
-        color: white;
+        color: white !important;
         text-align: center;
         padding: 12px;
         border-radius: 8px;
         font-weight: bold;
-        box-shadow: 0px 4px 10px rgba(0,0,0,0.3);
+        box-shadow: 0px 4px 10px rgba(0,0,0,0.15);
         margin-bottom: 20px;
     }
     .badge-modo {
         text-align: center;
-        padding: 6px;
-        border-radius: 5px;
+        padding: 8px;
+        border-radius: 6px;
         font-weight: bold;
         margin-bottom: 15px;
     }
+    /* Ajusta tamanho para telas pequenas */
     @media (max-width: 768px) {
-        .stDataFrame { font-size: 12px; }
+        .stDataFrame { font-size: 13px; }
         h2 { font-size: 18px !important; }
     }
     </style>
@@ -42,7 +43,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# --- PERSISTÊNCIA DE DADOS (BANCO DE DADOS EM ARQUIVO) ---
+# --- PERSISTÊNCIA DE DADOS ---
 ARQUIVO_DADOS = "dados_pcp.json"
 
 
@@ -78,15 +79,15 @@ if perfil == "⚙️ Administrador":
         if senha != "":
             st.sidebar.error("Senha incorreta!")
 
-# Banner de exibição
+# Banners com alto contraste garantido em telas claras e escuras
 if esolo_adm:
     st.markdown(
-        "<div class='badge-modo' style='background-color: #d97706; color: white;'>⚙️ MODO ADMINISTRADOR - EDIÇÃO LIBERADA</div>",
+        "<div class='badge-modo' style='background-color: #d97706; color: #ffffff;'>⚙️ MODO ADMINISTRADOR - EDIÇÃO LIBERADA</div>",
         unsafe_allow_html=True,
     )
 else:
     st.markdown(
-        "<div class='badge-modo' style='background-color: #009944; color: white;'>👁️ MODO LÍDER - VISUALIZAÇÃO DE DADOS PUBLICADOS</div>",
+        "<div class='badge-modo' style='background-color: #009944; color: #ffffff;'>👁️ MODO LÍDER - VISUALIZAÇÃO DE DADOS PUBLICADOS</div>",
         unsafe_allow_html=True,
     )
 
@@ -137,12 +138,12 @@ dias_semana = [
 tipos_bolos = ["PLACA", "REDONDO", "COBERTURA", "CREMOSO", "INGLÊS", "CASEIRO"]
 
 cores_bolos = {
-    "PLACA": "background-color: #6c757d; color: white; font-weight: bold;",
-    "INGLÊS": "background-color: #2b579a; color: white; font-weight: bold;",
-    "CASEIRO": "background-color: #d97706; color: white; font-weight: bold;",
-    "REDONDO": "background-color: #15803d; color: white; font-weight: bold;",
-    "CREMOSO": "background-color: #ca8a04; color: black; font-weight: bold;",
-    "COBERTURA": "background-color: #b91c1c; color: white; font-weight: bold;",
+    "PLACA": "background-color: #6c757d; color: #ffffff; font-weight: bold;",
+    "INGLÊS": "background-color: #2b579a; color: #ffffff; font-weight: bold;",
+    "CASEIRO": "background-color: #d97706; color: #ffffff; font-weight: bold;",
+    "REDONDO": "background-color: #15803d; color: #ffffff; font-weight: bold;",
+    "CREMOSO": "background-color: #ca8a04; color: #000000; font-weight: bold;",
+    "COBERTURA": "background-color: #b91c1c; color: #ffffff; font-weight: bold;",
 }
 
 
@@ -181,7 +182,7 @@ setor_ativo = st.sidebar.radio("Escolha a Programação:", lista_setores)
 chave_semana = f"{semana_ativa}_{setor_ativo}"
 esta_publicado = db.get("publicados", {}).get(chave_semana, False)
 
-# Recursos exclusivos de ADM
+# Recursos ADM
 if esolo_adm:
     st.sidebar.markdown("---")
     st.sidebar.header("🚀 Publicação aos Líderes")
@@ -199,6 +200,13 @@ if esolo_adm:
             salvar_banco(db)
             st.sidebar.success("Publicado com sucesso!")
             st.rerun()
+
+    if st.sidebar.button("🚀 PUBLICAR ALL SETORES DA SEMANA"):
+        for s in lista_setores:
+            db["publicados"][f"{semana_ativa}_{s}"] = True
+        salvar_banco(db)
+        st.sidebar.success("Todos os setores liberados!")
+        st.rerun()
 
     st.sidebar.markdown("---")
     st.sidebar.header("➕ Criar Novo Setor")
@@ -222,13 +230,12 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# --- NAVEGAÇÃO DE DIAS ---
+# --- DIAS DA SEMANA ---
 st.write("### 📅 Selecione o dia:")
 abas = st.tabs([f"🗓️ {dia[:3]}" for dia in dias_semana])
 
 for i, dia in enumerate(dias_semana):
     with abas[i]:
-        # VERIFICAÇÃO SE LÍDER PODE ENXERGAR
         if not esolo_adm and not esta_publicado:
             st.info(
                 "⏳ A programação desta semana ainda não foi publicada pelo Administrador."
