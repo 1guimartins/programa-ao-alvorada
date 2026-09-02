@@ -1,6 +1,7 @@
 import json
 import os
 from datetime import datetime, timedelta
+import io
 import pandas as pd
 import streamlit as st
 
@@ -11,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Estilização Adaptável + Fontes Maiores
+# --- ESTILIZAÇÃO CSS ADAPTÁVEL E OTIMIZADA ---
 st.markdown(
     """
     <style>
@@ -33,19 +34,24 @@ st.markdown(
         font-size: 16px !important;
         margin-bottom: 15px;
     }
-
-    /* Aumenta a fonte geral da página */
     html, body, [class*="css"], .stMarkdown, p, span {
         font-size: 16px !important;
     }
-
-    /* Melhora abas no celular */
+    div[data-testid="stDataFrame"] div[role="gridcell"] {
+        white-space: normal !important;
+        word-wrap: break-word !important;
+        font-size: 15px !important;
+        line-height: 1.4 !important;
+    }
+    div[data-testid="stDataFrame"] div[role="columnheader"] {
+        font-size: 16px !important;
+        font-weight: bold !important;
+    }
     button[data-baseweb="tab"] {
         font-size: 15px !important;
         padding-left: 8px !important;
         padding-right: 8px !important;
     }
-
     @media (max-width: 768px) {
         h2 { font-size: 20px !important; }
         h3 { font-size: 18px !important; }
@@ -55,13 +61,17 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# --- CONFIGURAÇÃO DE COLUNAS COM QUEBRA DE LINHA ATIVADA ---
+# --- CONFIGURAÇÃO DE COLUNAS DA TABELA ---
 config_colunas = {
+    "Status": st.column_config.SelectboxColumn(
+        "Status",
+        options=["⏳ Pendente", "🔄 Em Produção", "✅ Concluído"],
+        default="⏳ Pendente",
+        width="medium",
+    ),
     "Qtd": st.column_config.TextColumn("Qtd", width="small"),
     "Unidade": st.column_config.TextColumn("Unidade", width="small"),
-    "Produto": st.column_config.TextColumn(
-        "Produto", width="large"
-    ),  # Largura expandida para caber nomes longos
+    "Produto": st.column_config.TextColumn("Produto", width="large"),
 }
 
 # --- PERSISTÊNCIA DE DADOS ---
@@ -87,7 +97,7 @@ st.title("🛒 PCP - Supermercados Alvorada")
 # --- CONTROLE DE ACESSO ---
 st.sidebar.header("🔐 Perfil de Acesso")
 perfil = st.sidebar.radio(
-    "Acessar como:", ["👁️ Líder (Apenas Visualizar)", "⚙️ Administrador"]
+    "Acessar como:", ["👁️ Líder (Visualização / Status)", "⚙️ Administrador"]
 )
 
 esolo_adm = False
@@ -100,15 +110,15 @@ if perfil == "⚙️ Administrador":
         if senha != "":
             st.sidebar.error("Senha incorreta!")
 
-# Banners
+# Banners de perfil
 if esolo_adm:
     st.markdown(
-        "<div class='badge-modo' style='background-color: #d97706; color: #ffffff;'>⚙️ MODO ADMINISTRADOR - EDIÇÃO LIBERADA</div>",
+        "<div class='badge-modo' style='background-color: #d97706; color: #ffffff;'>⚙️ MODO ADMINISTRADOR - EDIÇÃO E CONFIGURAÇÕES LIBERADAS</div>",
         unsafe_allow_html=True,
     )
 else:
     st.markdown(
-        "<div class='badge-modo' style='background-color: #009944; color: #ffffff;'>👁️ MODO LÍDER - VISUALIZAÇÃO DE DADOS PUBLICADOS</div>",
+        "<div class='badge-modo' style='background-color: #009944; color: #ffffff;'>👁️ MODO LÍDER - VISUALIZAÇÃO E MARCAÇÃO DE STATUS DE PRODUÇÃO</div>",
         unsafe_allow_html=True,
     )
 
@@ -162,7 +172,7 @@ cores_bolos = {
 
 
 def colorir_linhas_bolo(row):
-    tipo = row["Tipo de Bolo"]
+    tipo = row.get("Tipo de Bolo", "")
     return [cores_bolos.get(tipo, "")] * len(row)
 
 
@@ -173,13 +183,68 @@ def processar_texto_colado(texto):
         partes = [p.strip() for p in linha.split("\t") if p.strip()]
         if len(partes) >= 3:
             dados.append(
-                {"Qtd": partes[0], "Unidade": partes[1], "Produto": partes[2]}
+                {
+                    "Status": "⏳ Pendente",
+                    "Qtd": partes[0],
+                    "Unidade": partes[1],
+                    "Produto": partes[2],
+                }
             )
         elif len(partes) == 2:
-            dados.append({"Qtd": partes[0], "Unidade": "", "Produto": partes[1]})
+            dados.append(
+                {
+                    "Status": "⏳ Pendente",
+                    "Qtd": partes[0],
+                    "Unidade": "",
+                    "Produto": partes[1],
+                }
+            )
         elif len(partes) == 1:
-            dados.append({"Qtd": "", "Unidade": "", "Produto": partes[0]})
+            dados.append(
+                {
+                    "Status": "⏳ Pendente",
+                    "Qtd": "",
+                    "Unidade": "",
+                    "Produto": partes[0],
+                }
+            )
     return pd.DataFrame(dados)
+
+
+def calcular_total_itens(df):
+    if df.empty or "Qtd" not in df.columns:
+        return 0, 0
+    total_itens = len(df)
+    soma_qtd = 0.0
+    for v in df["Qtd"]:
+        try:
+            soma_qtd += float(
+                str(v)
+                .replace(",", ".")
+                .replace("kg", "")
+                .replace("un", "")
+                .strip()
+            )
+        except ValueError:
+            pass
+    return total_itens, soma_qtd
+
+
+def gerar_relatorio_txt(titulo, df):
+    output = f"=========================================\n"
+    output += f"{titulo}\n"
+    output += f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
+    output += f"=========================================\n\n"
+    if df.empty:
+        output += "Nenhum item cadastrado.\n"
+    else:
+        for _, row in df.iterrows():
+            status = row.get("Status", "⏳ Pendente")
+            qtd = row.get("Qtd", "")
+            uni = row.get("Unidade", "")
+            prod = row.get("Produto", "")
+            output += f"[{status}] {qtd} {uni} - {prod}\n"
+    return output
 
 
 # --- BARRA LATERAL ---
@@ -219,7 +284,7 @@ setor_ativo = st.sidebar.radio("Escolha a Programação:", lista_setores)
 chave_semana = f"{semana_ativa}_{setor_ativo}"
 esta_publicado = db.get("publicados", {}).get(chave_semana, False)
 
-# Recursos ADM
+# Recursos ADM e Backup
 if esolo_adm:
     st.sidebar.markdown("---")
     st.sidebar.header("🚀 Publicação aos Líderes")
@@ -258,6 +323,26 @@ if esolo_adm:
             st.sidebar.success(f"Setor '{novo_setor}' criado!")
             st.rerun()
 
+    st.sidebar.markdown("---")
+    st.sidebar.header("💾 Backup e Segurança")
+    json_str = json.dumps(db, ensure_ascii=False, indent=4)
+    st.sidebar.download_button(
+        label="📥 Baixar Backup do Banco",
+        data=json_str,
+        file_name=f"backup_pcp_{datetime.now().strftime('%d_%m_%Y')}.json",
+        mime="application/json",
+    )
+
+    arquivo_backup = st.sidebar.file_uploader(
+        "Restaurar Banco de Dados:", type=["json"]
+    )
+    if arquivo_backup is not None:
+        if st.sidebar.button("⚠️ Confirmar Restauração"):
+            dados_restaurados = json.load(arquivo_backup)
+            salvar_banco(dados_restaurados)
+            st.sidebar.success("Banco de Dados restaurado!")
+            st.rerun()
+
 # --- HEADER ALVORADA ---
 st.markdown(
     f"<div class='header-alvorada'>"
@@ -266,6 +351,39 @@ st.markdown(
     f"</div>",
     unsafe_allow_html=True,
 )
+
+# --- BUSCA RÁPIDA DE PRODUTOS ---
+termo_busca = st.text_input(
+    "🔍 Busca Rápida de Produto:",
+    placeholder="Digite o nome do produto para procurar nesta semana...",
+)
+if termo_busca.strip():
+    st.markdown(f"**Resultados da busca por:** *'{termo_busca}'*")
+    encontrados = []
+    for chave, itens in db.get("dados", {}).items():
+        if chave.startswith(chave_semana):
+            partes_chave = chave.split("_")
+            dia_info = partes_chave[-1]
+            for it in itens:
+                if termo_busca.lower() in str(it.get("Produto", "")).lower():
+                    encontrados.append(
+                        {
+                            "Dia/Categoria": dia_info,
+                            "Status": it.get("Status", "⏳ Pendente"),
+                            "Qtd": it.get("Qtd", ""),
+                            "Unidade": it.get("Unidade", ""),
+                            "Produto": it.get("Produto", ""),
+                        }
+                    )
+    if encontrados:
+        st.dataframe(
+            pd.DataFrame(encontrados),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("Nenhum produto encontrado com esse nome.")
+    st.markdown("---")
 
 # --- DIAS DA SEMANA COM DATA ---
 st.write("### 📅 Selecione o dia:")
@@ -309,14 +427,27 @@ for i, item_dia in enumerate(dias_semana_com_data):
 
                 if lista_geral:
                     df_consolidado = pd.concat(lista_geral, ignore_index=True)
+                    t_itens, t_soma = calcular_total_itens(df_consolidado)
                     st.success(
-                        f"**Resumo de Produção para {dia_nome} ({dia_data_full}):**"
+                        f"📊 **Totais de Confeitaria:** {t_itens} tipos cadastrados | Soma de quantidades: **{t_soma:.2f}**"
                     )
+
                     df_estilizado = df_consolidado.style.apply(
                         colorir_linhas_bolo, axis=1
                     )
                     st.dataframe(
                         df_estilizado, use_container_width=True, hide_index=True
+                    )
+
+                    txt_rel = gerar_relatorio_txt(
+                        f"CONFEITARIA - {dia_nome} ({dia_data_full})",
+                        df_consolidado,
+                    )
+                    st.download_button(
+                        label="📄 Baixar Relatório do Dia (Impressão/Texto)",
+                        data=txt_rel,
+                        file_name=f"confeitaria_{dia_nome}_{dia_data_full.replace('/','_')}.txt",
+                        mime="text/plain",
                     )
                 else:
                     st.info(
@@ -331,8 +462,15 @@ for i, item_dia in enumerate(dias_semana_com_data):
                     df_atual = pd.DataFrame(dados_existentes)
                     if df_atual.empty:
                         df_atual = pd.DataFrame(
-                            columns=["Qtd", "Unidade", "Produto"]
+                            columns=["Status", "Qtd", "Unidade", "Produto"]
                         )
+                    elif "Status" not in df_atual.columns:
+                        df_atual.insert(0, "Status", "⏳ Pendente")
+
+                    t_itens, t_soma = calcular_total_itens(df_atual)
+                    st.info(
+                        f"📌 **{tipo}:** {t_itens} itens | Total estimado: **{t_soma:.2f}**"
+                    )
 
                     if esolo_adm:
                         col_tabela, col_colar = st.columns([2, 1])
@@ -365,7 +503,7 @@ for i, item_dia in enumerate(dias_semana_com_data):
                                 key=f"editor_{chave_item}",
                             )
                             if st.button(
-                                f"💾 Salvar Edição Manual ({tipo})",
+                                f"💾 Salvar Edição ({tipo})",
                                 key=f"save_manual_{chave_item}",
                             ):
                                 db["dados"][chave_item] = df_editado.to_dict(
@@ -376,12 +514,23 @@ for i, item_dia in enumerate(dias_semana_com_data):
                                 st.rerun()
                     else:
                         st.markdown(f"**Tipo de Bolo: {tipo}**")
-                        st.dataframe(
+                        df_editado = st.data_editor(
                             df_atual,
+                            num_rows="fixed",
                             use_container_width=True,
-                            hide_index=True,
                             column_config=config_colunas,
+                            key=f"editor_lider_{chave_item}",
                         )
+                        if st.button(
+                            f"💾 Atualizar Status ({tipo})",
+                            key=f"save_lider_{chave_item}",
+                        ):
+                            db["dados"][chave_item] = df_editado.to_dict(
+                                "records"
+                            )
+                            salvar_banco(db)
+                            st.success("Status atualizado!")
+                            st.rerun()
 
         else:
             # Setores Padrão
@@ -389,7 +538,16 @@ for i, item_dia in enumerate(dias_semana_com_data):
             dados_existentes = db["dados"].get(chave_item, [])
             df_atual = pd.DataFrame(dados_existentes)
             if df_atual.empty:
-                df_atual = pd.DataFrame(columns=["Qtd", "Unidade", "Produto"])
+                df_atual = pd.DataFrame(
+                    columns=["Status", "Qtd", "Unidade", "Produto"]
+                )
+            elif "Status" not in df_atual.columns:
+                df_atual.insert(0, "Status", "⏳ Pendente")
+
+            t_itens, t_soma = calcular_total_itens(df_atual)
+            st.info(
+                f"📊 **Totais do Dia:** {t_itens} itens cadastrados | Soma de quantidades: **{t_soma:.2f}**"
+            )
 
             if esolo_adm:
                 col_tabela, col_colar = st.columns([2, 1])
@@ -405,9 +563,6 @@ for i, item_dia in enumerate(dias_semana_com_data):
                     ):
                         if texto_colado.strip():
                             df_novo = processar_texto_colado(texto_colado)
-                            db["dados"][chave_item] = db["dados"].get(
-                                chave_item, []
-                            )
                             db["dados"][chave_item] = df_novo.to_dict("records")
                             salvar_banco(db)
                             st.success(f"Programação de {dia_nome} salva!")
@@ -432,9 +587,28 @@ for i, item_dia in enumerate(dias_semana_com_data):
                         st.rerun()
             else:
                 st.markdown(f"### 📌 Programação: {dia_nome} - {dia_data_full}")
-                st.dataframe(
+                df_editado = st.data_editor(
                     df_atual,
+                    num_rows="fixed",
                     use_container_width=True,
-                    hide_index=True,
                     column_config=config_colunas,
+                    key=f"editor_lider_{chave_item}",
                 )
+                if st.button(
+                    f"💾 Atualizar Status de {dia_nome}",
+                    key=f"save_lider_{chave_item}",
+                ):
+                    db["dados"][chave_item] = df_editado.to_dict("records")
+                    salvar_banco(db)
+                    st.success("Status atualizados!")
+                    st.rerun()
+
+            txt_rel = gerar_relatorio_txt(
+                f"{setor_ativo.upper()} - {dia_nome} ({dia_data_full})", df_atual
+            )
+            st.download_button(
+                label="📄 Baixar Relatório do Dia (Impressão/Texto)",
+                data=txt_rel,
+                file_name=f"{setor_ativo}_{dia_nome}_{dia_data_full.replace('/','_')}.txt",
+                mime="text/plain",
+            )
