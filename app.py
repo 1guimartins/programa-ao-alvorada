@@ -61,7 +61,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# --- CONFIGURAÇÃO DE COLUNAS DA TABELA ---
+# --- CONFIGURAÇÃO DE COLUNAS DA TABELA PADRÃO ---
 config_colunas = {
     "Status": st.column_config.SelectboxColumn(
         "Status",
@@ -74,7 +74,7 @@ config_colunas = {
     "Produto": st.column_config.TextColumn("Produto", width="large"),
 }
 
-# --- PERSISTÊNCIA DE DADOS ---
+# --- PERSISTÊNCIA DE DADOS (CRIAÇÃO AUTOMÁTICA DO JSON) ---
 ARQUIVO_DADOS = "dados_pcp.json"
 
 
@@ -82,7 +82,7 @@ def carregar_banco():
     if os.path.exists(ARQUIVO_DADOS):
         with open(ARQUIVO_DADOS, "r", encoding="utf-8") as f:
             return json.load(f)
-    return {"publicados": {}, "dados": {}, "setores": []}
+    return {"publicados": {}, "dados": {}, "setores": [], "metas_semanais": {}}
 
 
 def salvar_banco(db):
@@ -124,6 +124,7 @@ else:
 
 # --- SETORES ---
 setores_padrao = [
+    "Panificação - Pães / Roscas (Meta)",
     "Panificação",
     "Pré-Pesagem",
     "Confeitaria / Bolos Secos",
@@ -211,6 +212,41 @@ def processar_texto_colado(texto):
     return pd.DataFrame(dados)
 
 
+def processar_texto_meta_planilha(texto):
+    linhas = texto.strip().split("\n")
+    dados = []
+    for linha in linhas:
+        partes = [p.strip() for p in linha.split("\t") if p.strip()]
+        if len(partes) >= 3:
+            desc = partes[0]
+            item_code = partes[1]
+            try:
+                total_val = float(
+                    partes[2].replace(".", "").replace(",", ".")
+                )
+            except ValueError:
+                total_val = 0.0
+            dados.append(
+                {
+                    "Item": item_code,
+                    "Descrição": desc,
+                    "Meta_Semanal": total_val,
+                }
+            )
+        elif len(partes) == 2:
+            desc = partes[0]
+            try:
+                total_val = float(
+                    partes[1].replace(".", "").replace(",", ".")
+                )
+            except ValueError:
+                total_val = 0.0
+            dados.append(
+                {"Item": "-", "Descrição": desc, "Meta_Semanal": total_val}
+            )
+    return pd.DataFrame(dados)
+
+
 def calcular_total_itens(df):
     if df.empty or "Qtd" not in df.columns:
         return 0, 0
@@ -240,10 +276,10 @@ def exibir_botao_impressao_a4(titulo, df):
     linhas_html = ""
     for idx, row in df.iterrows():
         status = row.get("Status", "⏳ Pendente")
-        qtd = row.get("Qtd", "")
+        qtd = row.get("Qtd", row.get("Meta_Semanal", row.get("Saldo_Restante", "")))
         uni = row.get("Unidade", "")
-        prod = row.get("Produto", "")
-        tipo = row.get("Tipo de Bolo", "")
+        prod = row.get("Produto", row.get("Descrição", ""))
+        tipo = row.get("Tipo de Bolo", row.get("Item", ""))
         col_tipo = f"<td>{tipo}</td>" if tipo else ""
 
         linhas_html += f"""
@@ -257,7 +293,7 @@ def exibir_botao_impressao_a4(titulo, df):
         </tr>
         """
 
-    cabecalho_tipo = "<th>Tipo</th>" if "Tipo de Bolo" in df.columns else ""
+    cabecalho_tipo = "<th>Código / Tipo</th>" if "Tipo de Bolo" in df.columns or "Item" in df.columns else ""
 
     html_a4 = f"""
     <!DOCTYPE html>
@@ -303,7 +339,7 @@ def exibir_botao_impressao_a4(titulo, df):
                     <th style="width: 30px; text-align: center;">#</th>
                     <th style="width: 110px; text-align: center;">Status</th>
                     {cabecalho_tipo}
-                    <th style="width: 90px; text-align: center;">Qtd / Un</th>
+                    <th style="width: 90px; text-align: center;">Qtd / Total</th>
                     <th>Descrição do Produto</th>
                     <th style="width: 40px; text-align: center;">OK</th>
                 </tr>
@@ -441,17 +477,18 @@ if termo_busca.strip():
         if chave.startswith(chave_semana):
             partes_chave = chave.split("_")
             dia_info = partes_chave[-1]
-            for it in itens:
-                if termo_busca.lower() in str(it.get("Produto", "")).lower():
-                    encontrados.append(
-                        {
-                            "Dia/Categoria": dia_info,
-                            "Status": it.get("Status", "⏳ Pendente"),
-                            "Qtd": it.get("Qtd", ""),
-                            "Unidade": it.get("Unidade", ""),
-                            "Produto": it.get("Produto", ""),
-                        }
-                    )
+            if isinstance(itens, list):
+                for it in itens:
+                    if termo_busca.lower() in str(it.get("Produto", "")).lower():
+                        encontrados.append(
+                            {
+                                "Dia/Categoria": dia_info,
+                                "Status": it.get("Status", "⏳ Pendente"),
+                                "Qtd": it.get("Qtd", ""),
+                                "Unidade": it.get("Unidade", ""),
+                                "Produto": it.get("Produto", ""),
+                            }
+                        )
     if encontrados:
         st.dataframe(
             pd.DataFrame(encontrados),
@@ -462,218 +499,340 @@ if termo_busca.strip():
         st.info("Nenhum produto encontrado com esse nome.")
     st.markdown("---")
 
-# --- DIAS DA SEMANA COM DATA ---
-st.write("### 📅 Selecione o dia:")
-abas = st.tabs([item["label_aba"] for item in dias_semana_com_data])
 
-for i, item_dia in enumerate(dias_semana_com_data):
-    dia_nome = item_dia["nome"]
-    dia_data_full = item_dia["data_completa"]
+# =========================================================
+# LÓGICA ESPECIAL PARA SETOR DE META/SEPARAÇÃO (ABATIMENTO)
+# =========================================================
+if "Meta" in setor_ativo or "Pães / Roscas" in setor_ativo:
+    st.markdown("### 📊 Meta Semanal x Lançamento Diário da Separação")
 
-    with abas[i]:
-        if not esolo_adm and not esta_publicado:
-            st.info(
-                "⏳ A programação desta semana ainda não foi publicada pelo Administrador."
-            )
-            continue
+    # Módulo ADM de colar a tabela de Metas da Semana
+    if esolo_adm:
+        with st.expander("⚙️ Cadastrar/Editar Tabela de Meta Semanal (ADM)", expanded=False):
+            st.write("Copie do Excel (Colunas: Descrição | Item | Total) e cole abaixo:")
+            texto_meta_colado = st.text_area("Cole aqui a tabela do Excel:", height=150)
+            if st.button("💾 Salvar Meta Semanal da Tabela"):
+                if texto_meta_colado.strip():
+                    df_m = processar_texto_meta_planilha(texto_meta_colado)
+                    if "metas_semanais" not in db:
+                        db["metas_semanais"] = {}
+                    db["metas_semanais"][chave_semana] = df_m.to_dict("records")
+                    salvar_banco(db)
+                    st.success("Meta Semanal cadastrada com sucesso!")
+                    st.rerun()
 
-        if setor_ativo == "Confeitaria / Bolos Secos":
-            st.markdown(f"### 📌 Confeitaria: {dia_nome} - {dia_data_full}")
+    meta_cadastrada = db.get("metas_semanais", {}).get(chave_semana, [])
 
-            titulos_sub_abas = ["📋 Visão Geral"]
-            for tipo in tipos_bolos:
-                chave_item = f"{chave_semana}_{dia_nome}_{tipo}"
-                tem_dados = (
-                    chave_item in db["dados"] and len(db["dados"][chave_item]) > 0
-                )
-                indicador = "🟢" if tem_dados else "⚪"
-                titulos_sub_abas.append(f"{indicador} {tipo}")
+    if not meta_cadastrada:
+        st.info("⏳ Nenhuma Meta Semanal cadastrada pelo ADM para este setor nesta semana.")
+    else:
+        df_metas = pd.DataFrame(meta_cadastrada)
 
-            sub_abas = st.tabs(titulos_sub_abas)
+        st.write("### 📅 Selecione o dia para lançar ou consultar o saldo:")
+        abas_meta = st.tabs([item["label_aba"] for item in dias_semana_com_data])
 
-            # Visão Geral
-            with sub_abas[0]:
-                lista_geral = []
-                for tipo in tipos_bolos:
-                    chave_item = f"{chave_semana}_{dia_nome}_{tipo}"
-                    dados_salvos = db["dados"].get(chave_item, [])
-                    if dados_salvos:
-                        df_temp = pd.DataFrame(dados_salvos)
-                        df_temp.insert(0, "Tipo de Bolo", tipo)
-                        lista_geral.append(df_temp)
+        for i, item_dia in enumerate(dias_semana_com_data):
+            dia_nome = item_dia["nome"]
+            dia_data_full = item_dia["data_completa"]
+            chave_dia_meta = f"{chave_semana}_{dia_nome}"
 
-                if lista_geral:
-                    df_consolidado = pd.concat(lista_geral, ignore_index=True)
-                    t_itens, t_soma = calcular_total_itens(df_consolidado)
-                    st.success(
-                        f"📊 **Totais de Confeitaria:** {t_itens} tipos cadastrados | Soma de quantidades: **{t_soma:.2f}**"
+            with abas_meta[i]:
+                st.markdown(f"#### 📌 Lançamentos de {dia_nome} ({dia_data_full})")
+
+                # Calcular soma acumulada dos dias anteriores e do dia atual
+                lista_construida = []
+                for _, row in df_metas.iterrows():
+                    item_id = str(row["Item"])
+                    desc = row["Descrição"]
+                    meta_total = float(row["Meta_Semanal"])
+
+                    # Soma produções de TODOS os dias da semana para este item
+                    soma_separada_semana = 0.0
+                    for d_nome in nomes_dias:
+                        ch_d = f"{chave_semana}_{d_nome}"
+                        lançamentos_dia = db.get("dados", {}).get(ch_d, {})
+                        if isinstance(lançamentos_dia, dict):
+                            soma_separada_semana += float(lançamentos_dia.get(item_id, 0.0))
+
+                    # Lançamento exclusivo do dia selecionado
+                    lancamento_hoje = 0.0
+                    dados_dia_dict = db.get("dados", {}).get(chave_dia_meta, {})
+                    if isinstance(dados_dia_dict, dict):
+                        lancamento_hoje = float(dados_dia_dict.get(item_id, 0.0))
+
+                    saldo_restante = meta_total - soma_separada_semana
+
+                    status_item = "✅ Concluído" if saldo_restante <= 0 else ("🔄 Em Progresso" if soma_separada_semana > 0 else "⏳ Pendente")
+
+                    lista_construida.append(
+                        {
+                            "Status": status_item,
+                            "Item": item_id,
+                            "Descrição": desc,
+                            "Meta Semanal": meta_total,
+                            "Total Separado (Acumulado)": soma_separada_semana,
+                            "Saldo Restante": saldo_restante,
+                            f"Separado em {dia_nome}": lancamento_hoje,
+                        }
                     )
 
-                    df_estilizado = df_consolidado.style.apply(
-                        colorir_linhas_bolo, axis=1
+                df_painel_dia = pd.DataFrame(lista_construida)
+
+                col_nome_hoje = f"Separado em {dia_nome}"
+
+                if esolo_adm or esta_publicado:
+                    df_editado_meta = st.data_editor(
+                        df_painel_dia,
+                        disabled=[
+                            "Status",
+                            "Item",
+                            "Descrição",
+                            "Meta Semanal",
+                            "Total Separado (Acumulado)",
+                            "Saldo Restante",
+                        ],
+                        use_container_width=True,
+                        hide_index=True,
+                        key=f"editor_meta_{chave_dia_meta}",
                     )
-                    st.dataframe(
-                        df_estilizado, use_container_width=True, hide_index=True
-                    )
+
+                    if st.button(f"💾 Salvar Separação de {dia_nome}", key=f"btn_salvar_meta_{chave_dia_meta}"):
+                        if "dados" not in db:
+                            db["dados"] = {}
+
+                        novos_lancamentos = {}
+                        for _, r in df_editado_meta.iterrows():
+                            cod_i = str(r["Item"])
+                            val_sep = float(r[col_nome_hoje])
+                            novos_lancamentos[cod_i] = val_sep
+
+                        db["dados"][chave_dia_meta] = novos_lancamentos
+                        salvar_banco(db)
+                        st.success(f"Valores de {dia_nome} salvos e saldo atualizado!")
+                        st.rerun()
 
                     exibir_botao_impressao_a4(
-                        f"CONFEITARIA - {dia_nome} ({dia_data_full})",
-                        df_consolidado,
+                        f"PANIFICAÇÃO / META - {dia_nome} ({dia_data_full})",
+                        df_painel_dia,
                     )
                 else:
-                    st.info(
-                        f"Nenhum bolo cadastrado para {dia_nome} ({dia_data_full})."
-                    )
+                    st.info("⏳ A programação desta semana ainda não foi publicada pelo Administrador.")
 
-            # Tipos de Bolos
-            for j, tipo in enumerate(tipos_bolos):
-                with sub_abas[j + 1]:
+# =========================================================
+# LÓGICA PADRÃO PARA OS DEMAIS SETORES
+# =========================================================
+else:
+    st.write("### 📅 Selecione o dia:")
+    abas = st.tabs([item["label_aba"] for item in dias_semana_com_data])
+
+    for i, item_dia in enumerate(dias_semana_com_data):
+        dia_nome = item_dia["nome"]
+        dia_data_full = item_dia["data_completa"]
+
+        with abas[i]:
+            if not esolo_adm and not esta_publicado:
+                st.info(
+                    "⏳ A programação desta semana ainda não foi publicada pelo Administrador."
+                )
+                continue
+
+            if setor_ativo == "Confeitaria / Bolos Secos":
+                st.markdown(f"### 📌 Confeitaria: {dia_nome} - {dia_data_full}")
+
+                titulos_sub_abas = ["📋 Visão Geral"]
+                for tipo in tipos_bolos:
                     chave_item = f"{chave_semana}_{dia_nome}_{tipo}"
-                    dados_existentes = db["dados"].get(chave_item, [])
-                    df_atual = pd.DataFrame(dados_existentes)
-                    if df_atual.empty:
-                        df_atual = pd.DataFrame(
-                            columns=["Status", "Qtd", "Unidade", "Produto"]
-                        )
-                    elif "Status" not in df_atual.columns:
-                        df_atual.insert(0, "Status", "⏳ Pendente")
-
-                    t_itens, t_soma = calcular_total_itens(df_atual)
-                    st.info(
-                        f"📌 **{tipo}:** {t_itens} itens | Total estimado: **{t_soma:.2f}**"
+                    tem_dados = (
+                        chave_item in db["dados"] and len(db["dados"][chave_item]) > 0
                     )
+                    indicador = "🟢" if tem_dados else "⚪"
+                    titulos_sub_abas.append(f"{indicador} {tipo}")
 
-                    if esolo_adm:
-                        col_tabela, col_colar = st.columns([2, 1])
-                        with col_colar:
-                            st.markdown(f"**📋 Colar itens ({tipo}):**")
-                            texto_colado = st.text_area(
-                                "Copie do Excel e cole:",
-                                key=f"input_{chave_item}",
-                                height=120,
+                sub_abas = st.tabs(titulos_sub_abas)
+
+                # Visão Geral
+                with sub_abas[0]:
+                    lista_geral = []
+                    for tipo in tipos_bolos:
+                        chave_item = f"{chave_semana}_{dia_nome}_{tipo}"
+                        dados_salvos = db["dados"].get(chave_item, [])
+                        if isinstance(dados_salvos, list) and dados_salvos:
+                            df_temp = pd.DataFrame(dados_salvos)
+                            df_temp.insert(0, "Tipo de Bolo", tipo)
+                            lista_geral.append(df_temp)
+
+                    if lista_geral:
+                        df_consolidado = pd.concat(lista_geral, ignore_index=True)
+                        t_itens, t_soma = calcular_total_itens(df_consolidado)
+                        st.success(
+                            f"📊 **Totais de Confeitaria:** {t_itens} tipos cadastrados | Soma de quantidades: **{t_soma:.2f}**"
+                        )
+
+                        df_estilizado = df_consolidado.style.apply(
+                            colorir_linhas_bolo, axis=1
+                        )
+                        st.dataframe(
+                            df_estilizado, use_container_width=True, hide_index=True
+                        )
+
+                        exibir_botao_impressao_a4(
+                            f"CONFEITARIA - {dia_nome} ({dia_data_full})",
+                            df_consolidado,
+                        )
+                    else:
+                        st.info(
+                            f"Nenhum bolo cadastrado para {dia_nome} ({dia_data_full})."
+                        )
+
+                # Tipos de Bolos
+                for j, tipo in enumerate(tipos_bolos):
+                    with sub_abas[j + 1]:
+                        chave_item = f"{chave_semana}_{dia_nome}_{tipo}"
+                        dados_existentes = db["dados"].get(chave_item, [])
+                        df_atual = pd.DataFrame(dados_existentes) if isinstance(dados_existentes, list) else pd.DataFrame()
+                        if df_atual.empty:
+                            df_atual = pd.DataFrame(
+                                columns=["Status", "Qtd", "Unidade", "Produto"]
                             )
-                            if st.button(
-                                f"💾 Salvar {tipo}", key=f"btn_{chave_item}"
-                            ):
-                                if texto_colado.strip():
-                                    df_novo = processar_texto_colado(texto_colado)
-                                    db["dados"][chave_item] = df_novo.to_dict(
+                        elif "Status" not in df_atual.columns:
+                            df_atual.insert(0, "Status", "⏳ Pendente")
+
+                        t_itens, t_soma = calcular_total_itens(df_atual)
+                        st.info(
+                            f"📌 **{tipo}:** {t_itens} itens | Total estimado: **{t_soma:.2f}**"
+                        )
+
+                        if esolo_adm:
+                            col_tabela, col_colar = st.columns([2, 1])
+                            with col_colar:
+                                st.markdown(f"**📋 Colar itens ({tipo}):**")
+                                texto_colado = st.text_area(
+                                    "Copie do Excel e cole:",
+                                    key=f"input_{chave_item}",
+                                    height=120,
+                                )
+                                if st.button(
+                                    f"💾 Salvar {tipo}", key=f"btn_{chave_item}"
+                                ):
+                                    if texto_colado.strip():
+                                        df_novo = processar_texto_colado(texto_colado)
+                                        db["dados"][chave_item] = df_novo.to_dict(
+                                            "records"
+                                        )
+                                        salvar_banco(db)
+                                        st.success(f"{tipo} salvo!")
+                                        st.rerun()
+
+                            with col_tabela:
+                                st.markdown(f"**Tipo de Bolo: {tipo}**")
+                                df_editado = st.data_editor(
+                                    df_atual,
+                                    num_rows="dynamic",
+                                    use_container_width=True,
+                                    column_config=config_colunas,
+                                    key=f"editor_{chave_item}",
+                                )
+                                if st.button(
+                                    f"💾 Salvar Edição ({tipo})",
+                                    key=f"save_manual_{chave_item}",
+                                ):
+                                    db["dados"][chave_item] = df_editado.to_dict(
                                         "records"
                                     )
                                     salvar_banco(db)
-                                    st.success(f"{tipo} salvo!")
+                                    st.success("Alterações salvas!")
                                     st.rerun()
-
-                        with col_tabela:
+                        else:
                             st.markdown(f"**Tipo de Bolo: {tipo}**")
                             df_editado = st.data_editor(
                                 df_atual,
-                                num_rows="dynamic",
+                                num_rows="fixed",
                                 use_container_width=True,
                                 column_config=config_colunas,
-                                key=f"editor_{chave_item}",
+                                key=f"editor_lider_{chave_item}",
                             )
                             if st.button(
-                                f"💾 Salvar Edição ({tipo})",
-                                key=f"save_manual_{chave_item}",
+                                f"💾 Atualizar Status ({tipo})",
+                                key=f"save_lider_{chave_item}",
                             ):
                                 db["dados"][chave_item] = df_editado.to_dict(
                                     "records"
                                 )
                                 salvar_banco(db)
-                                st.success("Alterações salvas!")
+                                st.success("Status atualizado!")
                                 st.rerun()
-                    else:
-                        st.markdown(f"**Tipo de Bolo: {tipo}**")
-                        df_editado = st.data_editor(
-                            df_atual,
-                            num_rows="fixed",
-                            use_container_width=True,
-                            column_config=config_colunas,
-                            key=f"editor_lider_{chave_item}",
+
+            else:
+                # Setores Padrão
+                chave_item = f"{chave_semana}_{dia_nome}"
+                dados_existentes = db["dados"].get(chave_item, [])
+                df_atual = pd.DataFrame(dados_existentes) if isinstance(dados_existentes, list) else pd.DataFrame()
+                if df_atual.empty:
+                    df_atual = pd.DataFrame(
+                        columns=["Status", "Qtd", "Unidade", "Produto"]
+                    )
+                elif "Status" not in df_atual.columns:
+                    df_atual.insert(0, "Status", "⏳ Pendente")
+
+                t_itens, t_soma = calcular_total_itens(df_atual)
+                st.info(
+                    f"📊 **Totais do Dia:** {t_itens} itens cadastrados | Soma de quantidades: **{t_soma:.2f}**"
+                )
+
+                if esolo_adm:
+                    col_tabela, col_colar = st.columns([2, 1])
+                    with col_colar:
+                        st.markdown(f"**📋 Colar itens para {dia_nome}:**")
+                        texto_colado = st.text_area(
+                            "Copie do Excel e cole aqui:",
+                            key=f"input_{chave_item}",
+                            height=120,
                         )
                         if st.button(
-                            f"💾 Atualizar Status ({tipo})",
-                            key=f"save_lider_{chave_item}",
+                            f"💾 Importar para {dia_nome}", key=f"btn_{chave_item}"
                         ):
-                            db["dados"][chave_item] = df_editado.to_dict(
-                                "records"
-                            )
+                            if texto_colado.strip():
+                                df_novo = processar_texto_colado(texto_colado)
+                                db["dados"][chave_item] = df_novo.to_dict("records")
+                                salvar_banco(db)
+                                st.success(f"Programação de {dia_nome} salva!")
+                                st.rerun()
+
+                    with col_tabela:
+                        st.markdown(f"### 📌 Programação: {dia_nome} - {dia_data_full}")
+                        df_editado = st.data_editor(
+                            df_atual,
+                            num_rows="dynamic",
+                            use_container_width=True,
+                            column_config=config_colunas,
+                            key=f"editor_{chave_item}",
+                        )
+                        if st.button(
+                            f"💾 Salvar Alterações de {dia_nome}",
+                            key=f"save_manual_{chave_item}",
+                        ):
+                            db["dados"][chave_item] = df_editado.to_dict("records")
                             salvar_banco(db)
-                            st.success("Status atualizado!")
+                            st.success("Programação salva!")
                             st.rerun()
-
-        else:
-            # Setores Padrão
-            chave_item = f"{chave_semana}_{dia_nome}"
-            dados_existentes = db["dados"].get(chave_item, [])
-            df_atual = pd.DataFrame(dados_existentes)
-            if df_atual.empty:
-                df_atual = pd.DataFrame(
-                    columns=["Status", "Qtd", "Unidade", "Produto"]
-                )
-            elif "Status" not in df_atual.columns:
-                df_atual.insert(0, "Status", "⏳ Pendente")
-
-            t_itens, t_soma = calcular_total_itens(df_atual)
-            st.info(
-                f"📊 **Totais do Dia:** {t_itens} itens cadastrados | Soma de quantidades: **{t_soma:.2f}**"
-            )
-
-            if esolo_adm:
-                col_tabela, col_colar = st.columns([2, 1])
-                with col_colar:
-                    st.markdown(f"**📋 Colar itens para {dia_nome}:**")
-                    texto_colado = st.text_area(
-                        "Copie do Excel e cole aqui:",
-                        key=f"input_{chave_item}",
-                        height=120,
-                    )
-                    if st.button(
-                        f"💾 Importar para {dia_nome}", key=f"btn_{chave_item}"
-                    ):
-                        if texto_colado.strip():
-                            df_novo = processar_texto_colado(texto_colado)
-                            db["dados"][chave_item] = df_novo.to_dict("records")
-                            salvar_banco(db)
-                            st.success(f"Programação de {dia_nome} salva!")
-                            st.rerun()
-
-                with col_tabela:
+                else:
                     st.markdown(f"### 📌 Programação: {dia_nome} - {dia_data_full}")
                     df_editado = st.data_editor(
                         df_atual,
-                        num_rows="dynamic",
+                        num_rows="fixed",
                         use_container_width=True,
                         column_config=config_colunas,
-                        key=f"editor_{chave_item}",
+                        key=f"editor_lider_{chave_item}",
                     )
                     if st.button(
-                        f"💾 Salvar Alterações de {dia_nome}",
-                        key=f"save_manual_{chave_item}",
+                        f"💾 Atualizar Status de {dia_nome}",
+                        key=f"save_lider_{chave_item}",
                     ):
                         db["dados"][chave_item] = df_editado.to_dict("records")
                         salvar_banco(db)
-                        st.success("Programação salva!")
+                        st.success("Status atualizados!")
                         st.rerun()
-            else:
-                st.markdown(f"### 📌 Programação: {dia_nome} - {dia_data_full}")
-                df_editado = st.data_editor(
-                    df_atual,
-                    num_rows="fixed",
-                    use_container_width=True,
-                    column_config=config_colunas,
-                    key=f"editor_lider_{chave_item}",
-                )
-                if st.button(
-                    f"💾 Atualizar Status de {dia_nome}",
-                    key=f"save_lider_{chave_item}",
-                ):
-                    db["dados"][chave_item] = df_editado.to_dict("records")
-                    salvar_banco(db)
-                    st.success("Status atualizados!")
-                    st.rerun()
 
-            exibir_botao_impressao_a4(
-                f"{setor_ativo.upper()} - {dia_nome} ({dia_data_full})", df_atual
-            )
+                exibir_botao_impressao_a4(
+                    f"{setor_ativo.upper()} - {dia_nome} ({dia_data_full})", df_atual
+                )
